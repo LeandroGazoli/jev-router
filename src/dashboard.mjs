@@ -3,6 +3,7 @@ import { randomBytes, timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { EXPORT_FORMATS, exportFilename } from "./export.mjs";
 import { listStatuses, readLedger } from "./status.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -76,6 +77,20 @@ export async function startDashboard({ port = 0, token = randomToken(), statusDi
       const limit = url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined;
       const entries = readLedger({ since, limit, dir: statusDir });
       return json(res, 200, { entries, stats: aggregate(entries) });
+    }
+
+    if (url.pathname === "/api/export") {
+      const format = EXPORT_FORMATS[url.searchParams.get("format") ?? "csv"];
+      if (!format) return json(res, 400, { error: "format must be csv or json" });
+      const since = url.searchParams.has("since") ? Number(url.searchParams.get("since")) : undefined;
+      // The whole retained ledger by default, not the dashboard's 1000-entry view.
+      const entries = readLedger({ since, limit: 100000, dir: statusDir });
+      res.writeHead(200, {
+        "content-type": format.type,
+        "content-disposition": `attachment; filename="${exportFilename(url.searchParams.get("format") ?? "csv")}"`,
+        [IDENTITY_HEADER]: "1",
+      });
+      return res.end(format.toText(entries));
     }
 
     return json(res, 404, { error: "not found" });
