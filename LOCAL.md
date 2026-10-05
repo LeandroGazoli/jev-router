@@ -21,8 +21,14 @@ builders, longer timeouts), the launchers (no `JEV_API_KEY` gate), and one test 
 | `JEV_LOCAL_DEADLINE_MS` | `25000` | Hard limit for one routing decision |
 | `JEV_MAX_PROMPT_CHARS` | `1500` | Prompt text sent to the model (head and tail kept) |
 | `JEV_DISABLE` | unset | `1` starts the CLI without routing |
+| `JEV_DASHBOARD_PORT` | `8787` | Port for `jev-dashboard` (read-only web view of sessions and the routing ledger) |
 
 ## Notes
+
+- `routing.jsonl` lives alongside the per-session status files (same temp directory,
+  mode 0600) and is read only by `jev-dashboard`. One line per routed decision, without the
+  prompt text or the exact Jev exchange that the status files carry -- it is meant to live
+  longer (across sessions and restarts), so it carries less.
 
 - One decision = 4 parallel questions (tier choice + 3 complexity scores). Measured about 1.4 s
   warm and about 15 s on the very first call after the server loads.
