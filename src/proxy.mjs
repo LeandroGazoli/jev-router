@@ -216,6 +216,12 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
             const state = stateFor(key);
             // What the prompt cache was built on, which is what a downgrade would discard.
             const current = state.tier ?? "opus";
+            // No tier has been fixed for this conversation yet, so there is no cache built on
+            // `current` to protect. Without this, Claude Code's opening message (CLAUDE.md plus
+            // SessionStart hook output, sometimes tens of thousands of tokens) reads as a large
+            // conversation and the downgrade guard below refuses to ever leave the "opus"
+            // default, even on the very first turn.
+            const noTierYet = state.tier == null;
             const prompt = newTurnPrompt(body);
             const explaining = prompt?.includes("<jev-explain>");
             let fresh = null;
@@ -234,7 +240,7 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
                 jev: tierAnswer,
                 current,
                 available,
-                contextTokens,
+                contextTokens: noTierYet ? 0 : contextTokens,
               });
               const model =
                 shouldUseExactModel(reason, chosen?.tier, tier)

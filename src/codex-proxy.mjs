@@ -191,6 +191,10 @@ export async function startCodexProxy({
               availableTiers().includes(model.tier),
             );
             const available = [...new Set(candidates.map((model) => model.tier))];
+            // Same first-turn guard as the Claude proxy: no tier has been fixed for this
+            // conversation yet, so the opening message's size must not trip the downgrade
+            // guard below and pin every new conversation to the "opus" default.
+            const noTierYet = !states.has(key);
             const currentModel = states.get(key)?.model ?? modelForTier(candidates, "opus");
             const current = codexTierOf(currentModel) ?? "opus";
             const prompt = codexNewTurnPrompt(body);
@@ -206,7 +210,7 @@ export async function startCodexProxy({
                 jev: jev && { ...jev, choice: chosen?.tier },
                 current,
                 available,
-                contextTokens,
+                contextTokens: noTierYet ? 0 : contextTokens,
               });
               tier = decision.tier;
               model =
