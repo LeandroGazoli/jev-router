@@ -1,13 +1,15 @@
 #!/usr/bin/env node
 import { routingEnabled } from "../src/router.mjs";
 import { spawn } from "node:child_process";
-import { readFileSync, writeFileSync, mkdirSync, accessSync, constants } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { readFileSync, accessSync, constants } from "node:fs";
+import { homedir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startProxy } from "../src/proxy.mjs";
 import { AUTO_MODEL } from "../src/config.mjs";
 import { readSavedModel, restoreSavedModel } from "../src/settings.mjs";
+import { STATUS_DIR } from "../src/status.mjs";
+import { writePrivateFile } from "../src/private-fs.mjs";
 import { LOG_FILE } from "../src/log.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -61,14 +63,19 @@ function statusLineArgs() {
   // Passed as a file rather than inline JSON: on Windows the args go through a shell, and a
   // JSON string containing its own quotes does not survive that.
   const command = `"${process.execPath}" "${join(HERE, "jev-statusline.mjs")}"`;
-  const file = join(tmpdir(), "jev-claude", "settings.json");
+  // Shares STATUS_DIR (private per-user, symlink-checked) with the status files rather than a
+  // bare temp-dir path: Claude Code executes `command` as-is on every status line refresh, so
+  // another user able to replace this file on a shared machine could run arbitrary commands.
   try {
-    mkdirSync(dirname(file), { recursive: true });
-    writeFileSync(file, JSON.stringify({ statusLine: { type: "command", command } }));
+    const file = writePrivateFile(
+      STATUS_DIR,
+      "settings.json",
+      JSON.stringify({ statusLine: { type: "command", command } }),
+    );
+    return ["--settings", file];
   } catch {
     return [];
   }
-  return ["--settings", file];
 }
 
 // Existing environment variables win, followed by project-local, shared user-level, then
@@ -128,10 +135,27 @@ if (routingEnabled()) {
   env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
   env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
   Object.assign(env, autoModelEnv());
-  process.on("exit", () => {
+  // Guards against running twice: `exit` always fires on the way out, but a signal handler
+  // that calls process.exit() triggers `exit` too, and close()-ing an already-closed server
+  // throws. restoreSavedModel() is itself idempotent (it no-ops once the sentinel is gone).
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
     close();
     restoreSavedModel(savedModelBefore);
-  });
+  };
+  process.on("exit", cleanup);
+  // With no listener, Node terminates immediately on SIGTERM/SIGHUP without ever emitting
+  // `exit` -- `kill`ing this process (or a supervisor stopping it) would leave the "jev-router"
+  // sentinel stuck in the user's real settings.json, breaking plain `claude` afterwards.
+  // Ctrl+C (SIGINT) is left alone on purpose: Node already emits `exit` for it.
+  for (const signal of ["SIGTERM", "SIGHUP"]) {
+    process.on(signal, () => {
+      cleanup();
+      process.exit(1);
+    });
+  }
   args.push(...statusLineArgs());
   if (process.env.JEV_DEBUG && process.stdout.isTTY) {
     process.stderr.write(`[jev] routing decisions -> ${LOG_FILE}\n`);
