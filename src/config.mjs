@@ -63,7 +63,7 @@ export const THRESHOLDS = {
    * conversation. Measured at ~23.6k cache-creation tokens switching into Opus, so a
    * downgrade only pays off while the conversation is still small.
    */
-  downgradeMaxContextTokens: 20000,
+  downgradeMaxContextTokens: Number(process.env.JEV_DOWNGRADE_CUTOFF_TOKENS ?? 20000),
   /**
    * Per-attempt timeout and hard wall-clock deadline for the whole routing call against the
    * local llama-server. Generous because the first call after the model loads is slow.
