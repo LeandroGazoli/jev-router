@@ -38,7 +38,9 @@
 </head>
 <body>
   <h1>Jev Router</h1>
-  <p class="sub" id="subtitle">Read-only -- never calls the router itself.</p>
+  <p class="sub" id="subtitle">Read-only -- never calls the router itself.
+    Export the decision history (no prompt text):
+    <a id="exportCsv" href="#">CSV</a> · <a id="exportJson" href="#">JSON</a></p>
   <div class="grid">
     <section>
       <h2>Active sessions</h2>
@@ -112,6 +114,10 @@
   function refresh() {
     refreshSessions();
     refreshLedger();
+  }
+
+  for (const [id, format] of [["exportCsv", "csv"], ["exportJson", "json"]]) {
+    document.getElementById(id).href = "/api/export?format=" + format + "&token=" + encodeURIComponent(token);
   }
 
   refresh();

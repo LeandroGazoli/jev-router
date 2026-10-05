@@ -246,6 +246,10 @@ status files carry prompt text); keep that link private.
   for the lifetime of the session and print the link (add `JEV_DASHBOARD_OPEN=1` to open it). It is
   off by default so no port is opened unless you ask. A dashboard that was already running is
   reused and left running when the session ends.
+- **Export:** the page has CSV / JSON links, and `jev-dashboard --export csv` (or `json`, optionally
+  `--out file`) writes the same data without starting a server. It is the decision history only
+  (time, CLI, tier, model, confidence, reason, complexity scores, conversation id) -- never prompt text.
+  CSV cells that a spreadsheet could run as a formula are neutralised.
 - It is only available while one of those processes is running; the recorded history
   (`routing.jsonl`) is kept regardless.
 
