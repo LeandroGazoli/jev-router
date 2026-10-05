@@ -60,6 +60,6 @@ export const EXPORT_FORMATS = {
   json: { toText: ledgerToJson, type: "application/json; charset=utf-8" },
 };
 
-/** `jev-routing-2026-10-05.csv`: a name that sorts and says what it is. */
-export const exportFilename = (format, now = new Date()) =>
-  `jev-routing-${now.toISOString().slice(0, 10)}.${format}`;
+/** `jev-routing-2026-10-05.csv`, or `jev-routing-24h-2026-10-05.csv` for a windowed export. */
+export const exportFilename = (format, now = new Date(), windowName) =>
+  `jev-routing${windowName ? `-${windowName}` : ""}-${now.toISOString().slice(0, 10)}.${format}`;

@@ -2,10 +2,32 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
-<title>Jev Router dashboard</title>
+<title>{{PRODUCT_NAME}} dashboard</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-  :root { color-scheme: light dark; }
+  :root {
+    color-scheme: light dark;
+    --muted: GrayText;
+    --hairline: color-mix(in srgb, CanvasText 15%, transparent);
+    --rule: color-mix(in srgb, CanvasText 10%, transparent);
+    /* Tier and fault hues, each checked at 4.5:1 or better against its theme's background. */
+    --haiku: #2563eb;
+    --sonnet: #047857;
+    --opus: #b45309;
+    --fable: #7c3aed;
+    --fault: #dc2626;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --haiku: #60a5fa;
+      --sonnet: #34d399;
+      --opus: #fbbf24;
+      --fable: #a78bfa;
+      --fault: #f87171;
+    }
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
   body {
     font: 14px/1.5 -apple-system, "Segoe UI", sans-serif;
     margin: 0;
@@ -14,114 +36,422 @@
     color: CanvasText;
   }
   h1 { font-size: 18px; margin: 0 0 4px; }
-  .sub { color: GrayText; margin: 0 0 24px; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
-  section {
-    border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
-    border-radius: 8px;
-    padding: 16px;
+  .sub { color: var(--muted); margin: 0 0 8px; max-width: 70ch; }
+  .meta { color: var(--muted); font-size: 13px; margin: 0 0 16px; display: flex; flex-wrap: wrap; gap: 4px 16px; }
+  a:focus-visible, summary:focus-visible, .window input:focus-visible + label {
+    outline: 2px solid CanvasText;
+    outline-offset: 2px;
   }
-  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: GrayText; margin: 0 0 12px; }
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  td, th { text-align: left; padding: 4px 6px; border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent); }
-  .tier { font-weight: 600; text-transform: uppercase; font-size: 11px; }
-  .tier-haiku { color: #2563eb; }
-  .tier-sonnet { color: #059669; }
-  .tier-opus { color: #d97706; }
-  .tier-fable { color: #7c3aed; }
-  .prompt { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .manual { color: GrayText; font-style: italic; }
-  .error { color: #dc2626; }
-  .stat { display: flex; justify-content: space-between; padding: 2px 0; }
-  .empty { color: GrayText; font-style: italic; }
+
+  .banner { border: 1px solid var(--hairline); padding: 8px 12px; margin: 0 0 16px; font-size: 13px; }
+  .banner.fault { color: var(--fault); border-color: var(--fault); }
+  .banner:empty { display: none; }
+
+  main { display: flex; flex-direction: column; gap: 16px; }
+  main.stale .panel { opacity: 0.6; }
+  .panel { border: 1px solid var(--hairline); border-radius: 8px; padding: 16px; }
+  .panel h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--muted); margin: 0 0 12px; }
+  .panel-head { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px 16px; margin-bottom: 12px; }
+  .panel-head h2 { margin: 0; }
+  .note { color: var(--muted); font-size: 13px; margin: 0 0 12px; }
+  .empty { color: var(--muted); font-style: italic; margin: 0; }
+
+  .table-wrap { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid var(--rule); white-space: nowrap; vertical-align: baseline; }
+  th { font-weight: 600; color: var(--muted); font-size: 12px; }
+  th.num, td.num { text-align: right; }
+  td.c-prompt { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .tier { font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  .tier-haiku { color: var(--haiku); }
+  .tier-sonnet { color: var(--sonnet); }
+  .tier-opus { color: var(--opus); }
+  .tier-fable { color: var(--fable); }
+  .flag {
+    display: inline-block;
+    border: 1px solid currentColor;
+    padding: 0 4px;
+    margin-right: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+  }
+  .flag.fault { color: var(--fault); }
+  .flag[hidden] { display: none; }
+  .none { color: var(--muted); }
+  tr.idle td:not(.c-tier) { color: var(--muted); }
+
+  .window { border: 0; margin: 0; padding: 0; display: inline-flex; }
+  .window legend { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .window input { position: absolute; opacity: 0; pointer-events: none; }
+  .window label { border: 1px solid var(--hairline); margin-left: -1px; padding: 2px 10px; font-size: 13px; cursor: pointer; }
+  .window label:first-of-type { margin-left: 0; }
+  .window label:hover { background: var(--rule); }
+  .window input:checked + label { background: CanvasText; color: Canvas; border-color: CanvasText; position: relative; }
+
+  .cal-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px 32px; }
+  .cal-grid h3 { font-size: 13px; font-weight: 600; margin: 0 0 8px; }
+  .stat { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 2px 0; font-size: 13px; }
+  .stat .desc { display: block; color: var(--muted); font-size: 12px; }
+  .stat .count { font-weight: 700; font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+  .stat .pct { display: inline-block; min-width: 4ch; margin-left: 6px; color: var(--muted); font-weight: 400; }
+
+  details.help { font-size: 13px; }
+  details.help summary { cursor: pointer; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.04em; font-size: 13px; }
+  details.help dl { margin: 12px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; max-width: 80ch; }
+  details.help dt { font-weight: 600; }
+  details.help dd { margin: 0; }
+  code { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; white-space: nowrap; }
+
+  @media (max-width: 640px) {
+    body { padding: 16px; }
+    .table-wrap { overflow-x: visible; }
+    #sessions-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+    #sessions-table, #session-rows { display: block; }
+    #session-rows tr {
+      display: grid;
+      grid-template-columns: 11ch auto 1fr auto;
+      grid-template-areas: "id tier . conf" "model model age age" "flags flags flags flags" "prompt prompt prompt prompt";
+      gap: 0 12px;
+      padding: 8px 0;
+      border-bottom: 1px solid var(--rule);
+    }
+    #session-rows td { display: block; border: 0; padding: 1px 0; }
+    .c-id { grid-area: id; } .c-tier { grid-area: tier; } .c-conf { grid-area: conf; }
+    .c-model { grid-area: model; } .c-age { grid-area: age; text-align: right; }
+    .c-flags { grid-area: flags; } .c-flags:not(:has(.flag:not([hidden]))) { display: none; }
+    #session-rows td.c-prompt {
+      grid-area: prompt; width: auto; max-width: none; white-space: normal;
+      display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    }
+    .window label { padding: 8px 14px; }
+    details.help dl { grid-template-columns: 1fr; gap: 0; }
+    details.help dt { margin-top: 8px; }
+  }
 </style>
 </head>
 <body>
-  <h1>Jev Router</h1>
-  <p class="sub" id="subtitle">Read-only -- never calls the router itself.
-    Export the decision history (no prompt text):
-    <a id="exportCsv" href="#">CSV</a> · <a id="exportJson" href="#">JSON</a></p>
-  <div class="grid">
-    <section>
-      <h2>Active sessions</h2>
-      <table id="sessions"><tbody><tr><td class="empty">loading…</td></tr></tbody></table>
+  <header>
+    <h1>{{PRODUCT_NAME}}</h1>
+    <p class="sub">What the router chose for each coding-CLI session, and how those choices are distributed. Read-only: viewing this page never runs the router.</p>
+    <p class="meta">
+      <span id="freshness">Loading…</span>
+      <span><span id="export-label">Export:</span> <a id="export-csv" href="#">CSV</a> · <a id="export-json" href="#">JSON</a> (no prompt text)</span>
+    </p>
+    <div id="banner" class="banner" role="status"></div>
+  </header>
+  <noscript><p class="banner">This page needs JavaScript to load its data.</p></noscript>
+
+  <main id="main">
+    <section class="panel" aria-labelledby="h-sessions">
+      <h2 id="h-sessions">Recent sessions</h2>
+      <p class="note" id="sessions-note"></p>
+      <div class="table-wrap">
+        <table id="sessions-table" role="table" aria-labelledby="h-sessions" hidden>
+          <thead role="rowgroup">
+            <tr role="row">
+              <th role="columnheader">Session</th>
+              <th role="columnheader">Tier</th>
+              <th role="columnheader">Model</th>
+              <th role="columnheader" class="num" title="The probability the routing model gave to the model it chose. It does not measure whether the choice was right.">Confidence</th>
+              <th role="columnheader">Last decision</th>
+              <th role="columnheader">Flags</th>
+              <th role="columnheader">Prompt</th>
+            </tr>
+          </thead>
+          <tbody id="session-rows" role="rowgroup"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="sessions-empty" hidden>No routed prompts yet. Start a session with <code>jev-claude</code> or <code>jev-codex</code> and send a prompt; its first routing decision appears here.</p>
     </section>
-    <section>
-      <h2>Decisions by tier (ledger)</h2>
-      <div id="byTier"></div>
+
+    <section class="panel" aria-labelledby="h-cal">
+      <div class="panel-head">
+        <h2 id="h-cal">Calibration</h2>
+        <fieldset class="window">
+          <legend>Time window</legend>
+          <input type="radio" name="window" id="w-1h" value="1h" /><label for="w-1h">1h</label>
+          <input type="radio" name="window" id="w-24h" value="24h" /><label for="w-24h">24h</label>
+          <input type="radio" name="window" id="w-7d" value="7d" /><label for="w-7d">7d</label>
+          <input type="radio" name="window" id="w-all" value="all" /><label for="w-all">All</label>
+        </fieldset>
+      </div>
+      <p class="note" id="cal-note">Loading…</p>
+      <div class="cal-grid" id="cal-grid" hidden>
+        <div><h3>Tier</h3><div id="rows-tier"></div></div>
+        <div><h3>Confidence</h3><div id="rows-confidence"></div></div>
+        <div><h3>Outcome</h3><div id="rows-outcome"></div></div>
+        <div><h3>CLI</h3><div id="rows-cli"></div></div>
+      </div>
     </section>
-    <section>
-      <h2>Decisions by CLI (ledger)</h2>
-      <div id="byCli"></div>
-    </section>
-  </div>
+
+    <details class="help panel">
+      <summary>How to read this page</summary>
+      <dl>
+        <dt>Tier</dt><dd>The model class the router chose for the turn: haiku (fast), sonnet (balanced), opus (strong), fable (the opt-in long tier).</dd>
+        <dt>Confidence</dt><dd>The probability the local routing model gave to the model it chose. It is not a measure of whether the choice was right.</dd>
+        <dt>Low</dt><dd>Confidence under the router's minimum. The router never downgrades on a low answer and caps upgrades.</dd>
+        <dt>Overruled</dt><dd>Policy changed the router's pick: the risk floor, the low-confidence rules, the cache-rebuild guard, a one-step upgrade limit, or an unavailable tier.</dd>
+        <dt>Unavailable</dt><dd>The routing model could not be reached, so the current model was kept.</dd>
+        <dt>Manual</dt><dd>You picked a model yourself, so routing is paused in that session.</dd>
+        <dt>Idle</dt><dd>No new decision for 15 minutes.</dd>
+        <dt>Where it comes from</dt><dd>Sessions come from per-session files kept for 7 days. Calibration comes from the decision ledger (<code>routing.jsonl</code>), which stores no prompt text. Confidence bands use this process's <code>JEV_MIN_CONFIDENCE</code> and <code>JEV_STEP_UP_CONFIDENCE</code>.</dd>
+      </dl>
+    </details>
+  </main>
+
 <script>
-  const token = new URLSearchParams(location.search).get("token") ?? "";
-  const authed = (path) => fetch(path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token));
+  const params = new URLSearchParams(location.search);
+  const token = params.get("token") ?? "";
+  const WINDOW_LABELS = { "1h": "last hour", "24h": "last 24 hours", "7d": "last 7 days", all: "everything retained" };
+  const POLL_MS = 3000;
+  const IDLE_AFTER_MS = 15 * 60 * 1000;
+  const TIER_ORDER = ["haiku", "sonnet", "opus", "fable"];
 
-  function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  let windowName = Object.hasOwn(WINDOW_LABELS, params.get("window")) ? params.get("window") : "24h";
+  let state = "loading";
+  let lastOk = 0;
+  let inFlight = false;
+  let rerun = false;
+  const rows = new Map(); // session id -> { tr, sig }
+
+  const $ = (id) => document.getElementById(id);
+
+  function el(tag, attrs = {}, ...kids) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(attrs)) {
+      if (value == null || value === false) continue;
+      if (key === "class") node.className = value;
+      else node.setAttribute(key, value === true ? "" : String(value));
+    }
+    for (const kid of kids) if (kid != null) node.append(kid);
+    return node;
   }
 
-  async function refreshSessions() {
-    const res = await authed("/api/sessions");
-    if (!res.ok) {
-      document.getElementById("subtitle").textContent = "Auth failed (" + res.status + ") -- check the token in the URL.";
-      document.getElementById("subtitle").className = "sub error";
+  const pct = (value) => Math.round(value * 100) + "%";
+  const share = (count, total) => (!total ? "" : count > 0 && count / total < 0.01 ? "<1%" : pct(count / total));
+  const fmtWhen = (ms) => new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+
+  function ago(ms) {
+    const s = Math.max(0, Math.round(ms / 1000));
+    if (s < 5) return "just now";
+    if (s < 60) return s + "s ago";
+    const m = Math.floor(s / 60);
+    if (m < 60) return m + "m ago";
+    const h = Math.floor(m / 60);
+    return h < 48 ? h + "h ago" : Math.floor(h / 24) + "d ago";
+  }
+
+  async function api(path) {
+    const res = await fetch(path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token), { cache: "no-store" });
+    if (res.status === 401) throw Object.assign(new Error("token rejected"), { auth: true });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    return res.json();
+  }
+
+  function setState(next) {
+    if (next === state) return;
+    state = next;
+    const banner = $("banner");
+    const failing = next === "stale" || next === "auth";
+    $("main").classList.toggle("stale", failing);
+    banner.classList.toggle("fault", next === "auth");
+    banner.textContent = !failing
+      ? ""
+      : next === "auth"
+        ? "The access token was rejected, so it may have changed. Run jev-dashboard and open the link it prints."
+        : "Can't reach the dashboard server. This is the last data it sent, and the page keeps trying.";
+  }
+
+  // ---- sessions ----
+
+  const shortId = (id) => (/^[0-9a-f]{8}-[0-9a-f]{4}-/i.test(id) ? id.slice(0, 8) : id);
+  const tierTag = (tier) => el("span", { class: "tier tier-" + String(tier ?? "").replace(/[^a-z]/g, "") }, tier ?? "?");
+
+  function flagsFor(s, thresholds) {
+    const out = [];
+    if (s.manual) out.push(["Manual", false, "You chose a model yourself, so routing is paused in this session."]);
+    else {
+      if (s.family === "overruled") out.push(["Overruled", false, "Policy changed the router's pick."]);
+      if (s.family === "unavailable") out.push(["Unavailable", true, "The routing model could not be reached; the current model was kept."]);
+      if (typeof s.confidence === "number" && s.confidence < thresholds.minConfidence) {
+        out.push(["Low", true, "Confidence is under the router's minimum (" + pct(thresholds.minConfidence) + ")."]);
+      }
+    }
+    return out;
+  }
+
+  function buildRow(s, thresholds) {
+    const cell = (cls, content, title) => el("td", { role: "cell", class: cls, title }, ...[].concat(content));
+    const none = (text) => el("span", { class: "none" }, text);
+    const when = Number.isFinite(s.at) ? new Date(s.at) : null;
+    const flags = flagsFor(s, thresholds).map(([text, fault, why]) => el("span", { class: "flag" + (fault ? " fault" : ""), title: why }, text));
+    flags.push(el("span", { class: "flag idle-flag", hidden: true, title: "No new decision for 15 minutes." }, "Idle"));
+    return el(
+      "tr",
+      { role: "row", "data-at": Number.isFinite(s.at) ? s.at : null },
+      cell("c-id", shortId(s.sessionId), s.sessionId),
+      cell("c-tier", s.manual ? none("n/a") : tierTag(s.tier)),
+      cell("c-model", s.manual || !s.model ? none("n/a") : s.model),
+      cell("c-conf num", s.manual || s.confidence == null ? none("n/a") : pct(s.confidence)),
+      cell("c-age", el("time", { datetime: when ? when.toISOString() : null, title: when ? when.toLocaleString() : null }), null),
+      cell("c-flags", flags),
+      cell("c-prompt", s.manual ? "Model chosen by hand; routing is paused in this session." : (s.prompt ?? ""), s.manual ? null : s.prompt),
+    );
+  }
+
+  function renderSessions(list, thresholds) {
+    const body = $("session-rows");
+    $("sessions-empty").hidden = list.length > 0;
+    $("sessions-table").hidden = list.length === 0;
+    $("sessions-note").textContent = list.length
+      ? list.length + (list.length === 1 ? " session" : " sessions") + " in the last 7 days. After 15 minutes without a decision a session is dimmed and marked Idle."
+      : "";
+    const seen = new Set();
+    list.forEach((s, i) => {
+      seen.add(s.sessionId);
+      const sig = JSON.stringify([s.tier, s.model, s.confidence, s.reason, s.family, s.at, s.manual, s.prompt, thresholds.minConfidence]);
+      let entry = rows.get(s.sessionId);
+      if (!entry || entry.sig !== sig) {
+        const tr = buildRow(s, thresholds);
+        if (entry) entry.tr.replaceWith(tr);
+        entry = { tr, sig };
+        rows.set(s.sessionId, entry);
+      }
+      // Only rows that moved are touched, so text selection and tooltips survive the 3s refresh.
+      if (body.children[i] !== entry.tr) body.insertBefore(entry.tr, body.children[i] ?? null);
+    });
+    for (const [id, entry] of rows) {
+      if (!seen.has(id)) {
+        entry.tr.remove();
+        rows.delete(id);
+      }
+    }
+    tick();
+  }
+
+  // ---- calibration ----
+
+  function statRow(label, description, count, total) {
+    const what = el("span", { class: "what" }, label);
+    if (description) what.append(el("span", { class: "desc" }, description));
+    return el("div", { class: "stat" }, what, el("span", { class: "count" }, String(count), el("span", { class: "pct" }, share(count, total))));
+  }
+
+  function fill(id, nodes) {
+    $(id).replaceChildren(...nodes);
+  }
+
+  function renderStats({ stats, thresholds, window: w }) {
+    const total = stats.total;
+    const label = WINDOW_LABELS[w];
+    $("cal-note").textContent = total
+      ? total + (total === 1 ? " decision" : " decisions") + ", " + label + (stats.first != null ? ", " + fmtWhen(stats.first) + " – " + fmtWhen(stats.last) : "") + "."
+      : "No decisions in the " + label + "." + (w === "all" ? "" : " Try a longer window.");
+    $("cal-grid").hidden = total === 0;
+    if (!total) return;
+
+    const tiers = Object.keys(stats.byTier).sort((a, b) => {
+      const ia = TIER_ORDER.indexOf(a), ib = TIER_ORDER.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+    });
+    fill("rows-tier", tiers.map((t) => statRow(tierTag(t), "", stats.byTier[t], total)));
+
+    const b = stats.bands;
+    const bandRows = [
+      [b.low, "Under " + pct(thresholds.minConfidence), "Never downgrades; upgrades are capped."],
+      [b.mid, pct(thresholds.minConfidence) + " to " + pct(thresholds.stepUpConfidence), "Jumps of more than one tier are cut to one step."],
+      [b.high, pct(thresholds.stepUpConfidence) + " and up", "No confidence-based limit."],
+    ].map(([n, name, why]) => statRow(name, why, n, total));
+    if (b.unknown) bandRows.push(statRow("Not recorded", "", b.unknown, total));
+    fill("rows-confidence", bandRows);
+
+    const o = stats.outcomes;
+    const outcomeRows = [
+      ["accepted", "Router's pick used", true],
+      ["overruled", "Policy changed the pick", true],
+      ["override", "You named a model in the prompt", false],
+      ["unavailable", "Router unreachable; model kept", false],
+    ].filter(([key, , always]) => always || o[key] > 0).map(([key, name]) => statRow(name, "", o[key], total));
+    fill("rows-outcome", outcomeRows);
+
+    fill("rows-cli", Object.entries(stats.byCli).sort((a, c) => c[1] - a[1]).map(([cli, n]) => statRow(cli, "", n, total)));
+  }
+
+  // ---- window selector, export, refresh loop ----
+
+  function exportUrl(format) {
+    return "/api/export?format=" + format + "&window=" + windowName + "&token=" + encodeURIComponent(token);
+  }
+
+  function applyWindow() {
+    const u = new URL(location.href);
+    u.searchParams.set("window", windowName);
+    history.replaceState(null, "", u);
+    document.querySelector('input[name="window"][value="' + windowName + '"]').checked = true;
+    $("export-label").textContent = "Export, " + WINDOW_LABELS[windowName] + ":";
+    $("export-csv").href = exportUrl("csv");
+    $("export-json").href = exportUrl("json");
+  }
+
+  async function refresh() {
+    if (inFlight) {
+      rerun = true;
       return;
     }
-    const sessions = await res.json();
-    const body = document.getElementById("sessions");
-    if (!sessions.length) {
-      body.innerHTML = "<tr><td class='empty'>no sessions yet</td></tr>";
-      return;
+    inFlight = true;
+    const asked = windowName;
+    try {
+      const [sessions, stats] = await Promise.all([api("/api/sessions"), api("/api/stats?window=" + asked)]);
+      if (asked === windowName) {
+        lastOk = Date.now();
+        setState("ok");
+        renderSessions(sessions, stats.thresholds);
+        renderStats(stats);
+      }
+    } catch (err) {
+      setState(err.auth ? "auth" : "stale");
+    } finally {
+      inFlight = false;
+      if (rerun) {
+        rerun = false;
+        refresh();
+      }
     }
-    body.innerHTML =
-      "<thead><tr><th>Session</th><th>Tier</th><th>Confidence</th><th>Prompt</th></tr></thead><tbody>" +
-      sessions
-        .map((s) => {
-          if (s.manual) {
-            return "<tr><td>" + escapeHtml(s.sessionId) + "</td><td colspan='3' class='manual'>manual model selected</td></tr>";
-          }
-          const conf = s.confidence == null ? "n/a" : Math.round(s.confidence * 100) + "%";
-          return (
-            "<tr><td>" + escapeHtml(s.sessionId) + "</td>" +
-            "<td class='tier tier-" + escapeHtml(s.tier ?? "") + "'>" + escapeHtml(s.tier ?? "?") + "</td>" +
-            "<td>" + conf + "</td>" +
-            "<td class='prompt' title=\"" + escapeHtml(s.prompt ?? "") + "\">" + escapeHtml(s.prompt ?? "") + "</td></tr>"
-          );
-        })
-        .join("") +
-      "</tbody>";
   }
 
-  function renderCounts(elId, counts) {
-    const el = document.getElementById(elId);
-    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    el.innerHTML = entries.length
-      ? entries.map(([k, v]) => "<div class='stat'><span>" + escapeHtml(k) + "</span><strong>" + v + "</strong></div>").join("")
-      : "<div class='empty'>no decisions recorded yet</div>";
+  function tick() {
+    const now = Date.now();
+    $("freshness").textContent = lastOk ? "Updated " + ago(now - lastOk) : "Loading…";
+    for (const { tr } of rows.values()) {
+      const at = Number(tr.dataset.at);
+      const known = tr.dataset.at !== undefined && Number.isFinite(at);
+      tr.querySelector("time").textContent = known ? ago(now - at) : "unknown";
+      const idle = known && now - at > IDLE_AFTER_MS;
+      tr.classList.toggle("idle", idle);
+      tr.querySelector(".idle-flag").hidden = !idle;
+    }
   }
 
-  async function refreshLedger() {
-    const res = await authed("/api/ledger?limit=2000");
-    if (!res.ok) return;
-    const { stats } = await res.json();
-    renderCounts("byTier", stats.byTier);
-    renderCounts("byCli", stats.byCli);
+  for (const input of document.querySelectorAll('input[name="window"]')) {
+    input.addEventListener("change", () => {
+      windowName = input.value;
+      applyWindow();
+      $("cal-note").textContent = "Loading…";
+      refresh();
+    });
   }
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) refresh();
+  });
 
-  function refresh() {
-    refreshSessions();
-    refreshLedger();
-  }
-
-  for (const [id, format] of [["exportCsv", "csv"], ["exportJson", "json"]]) {
-    document.getElementById(id).href = "/api/export?format=" + format + "&token=" + encodeURIComponent(token);
-  }
-
+  applyWindow();
   refresh();
-  setInterval(refresh, 3000);
+  setInterval(() => {
+    if (!document.hidden) refresh();
+  }, POLL_MS);
+  setInterval(tick, 1000);
 </script>
 </body>
 </html>

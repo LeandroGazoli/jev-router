@@ -230,11 +230,17 @@ jev-dashboard
 # [jev] dashboard: http://127.0.0.1:8787/?token=...
 ```
 
-Opens a small, read-only web page showing active sessions (tier, confidence, prompt) and
-aggregate decision counts from the durable routing ledger. It never calls Jev or the router
-itself -- it only reads the same status files the status line and `/jev-explain` already use,
-so viewing it costs nothing extra. The token in the URL is required on every request (the
-status files carry prompt text); keep that link private.
+Opens a small, read-only web page with two parts. **Recent sessions** lists each session's tier,
+model, confidence and last decision, with a text flag when something is off: *Low* confidence,
+*Overruled* by policy, *Unavailable* router, *Manual* model choice, or *Idle* (no decision for
+15 minutes). **Calibration** shows how decisions distribute over a window you pick (1h, 24h, 7d,
+all): by tier, by confidence band (cut at the router's own thresholds), by outcome (the router's
+pick used, changed by policy, named by you, or router unreachable), and by CLI. It never calls Jev
+or the router itself -- it only reads the same status files the status line and `/jev-explain`
+already use, so viewing it costs nothing extra. The page shows when it last updated and says so
+when it cannot reach the server. The token in the URL is required on every request (the status
+files carry prompt text); keep that link private. Opening the page without a valid token shows a
+short explanation of how to get the right link.
 
 - **Stable link:** the token is saved (mode 0600) in the same private directory as the status
   files, so the link is the same on every start and can be bookmarked. `jev-dashboard --new-token`
@@ -246,8 +252,9 @@ status files carry prompt text); keep that link private.
   for the lifetime of the session and print the link (add `JEV_DASHBOARD_OPEN=1` to open it). It is
   off by default so no port is opened unless you ask. A dashboard that was already running is
   reused and left running when the session ends.
-- **Export:** the page has CSV / JSON links, and `jev-dashboard --export csv` (or `json`, optionally
-  `--out file`) writes the same data without starting a server. It is the decision history only
+- **Export:** the page has CSV / JSON links that follow the selected window, and
+  `jev-dashboard --export csv` (or `json`, optionally `--out file`) writes the whole retained history
+  without starting a server. It is the decision history only
   (time, CLI, tier, model, confidence, reason, complexity scores, conversation id) -- never prompt text.
   CSV cells that a spreadsheet could run as a formula are neutralised.
 - It is only available while one of those processes is running; the recorded history
