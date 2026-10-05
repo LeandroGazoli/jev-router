@@ -13,8 +13,8 @@ const score = (instructions, criteria) => ({ type: "score", instructions, criter
  */
 export const TIERS = [
   { name: "haiku", id: "claude-haiku-4-5-20251001", family: "haiku", thinking: false, effort: false },
-  { name: "sonnet", id: "claude-sonnet-5", family: "sonnet", thinking: true, effort: true },
-  { name: "opus", id: "claude-opus-5", family: "opus", thinking: true, effort: true },
+  { name: "sonnet", id: "claude-sonnet-5-5", family: "sonnet", thinking: true, effort: true },
+  { name: "opus", id: "claude-opus-5-5", family: "opus", thinking: true, effort: true },
   { name: "fable", id: "claude-fable-5-1", family: "fable", thinking: true, effort: true },
 ];
 
@@ -54,7 +54,7 @@ export const THRESHOLDS = {
   /** Safest tier to land on when Jev is unsure. */
   uncertainCeiling: "sonnet",
   /** Below this confidence a jump of more than one tier is shortened to one step up. */
-  stepUpConfidence: Number(process.env.JEV_STEP_UP_CONFIDENCE ?? 0.8),
+  stepUpConfidence: Number(process.env.JEV_STEP_UP_CONFIDENCE ?? 0.6),
   /** Task-complexity score (0-1) from which Haiku is never used. */
   riskFloor: Number(process.env.JEV_RISK_FLOOR ?? 0.5),
   riskFloorTier: "sonnet",

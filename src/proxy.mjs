@@ -99,10 +99,27 @@ export function applyTier(body, tierName, model = idOf(tierName)) {
   return body;
 }
 
-/** Exact Claude models reported by the account, newest first; static ids are the cold-start fallback. */
+// Numeric parts of an id without a trailing release date: "claude-opus-4-8" -> [4, 8].
+const versionOf = (id) => (String(id).replace(/-\d{8}.*$/, "").match(/\d+/g) ?? []).map(Number);
+const newerFirst = (a, b) => {
+  if (a.created_at && b.created_at && a.created_at !== b.created_at) return a.created_at < b.created_at ? 1 : -1;
+  const [x, y] = [versionOf(a.id), versionOf(b.id)];
+  for (let i = 0; i < Math.max(x.length, y.length); i += 1) {
+    if ((x[i] ?? 0) !== (y[i] ?? 0)) return (y[i] ?? 0) - (x[i] ?? 0);
+  }
+  return 0;
+};
+
+/**
+ * Exact Claude models reported by the account. Only the newest version of each tier is offered
+ * to Jev, so a new release is picked up automatically and an older one is never chosen;
+ * JEV_ALL_VERSIONS=1 offers every version as a separate choice. Static ids are the cold-start fallback.
+ */
 export function claudeModels(catalog = []) {
-  const models = catalog
-    .filter((model) => tierOf(model?.id))
+  const newest = new Map();
+  const all = catalog.filter((model) => tierOf(model?.id));
+  for (const model of [...all].sort(newerFirst)) if (!newest.has(tierOf(model.id))) newest.set(tierOf(model.id), model);
+  const models = (process.env.JEV_ALL_VERSIONS === "1" ? all : [...newest.values()])
     .map((model) => ({
       id: model.id,
       tier: tierOf(model.id),
@@ -174,6 +191,27 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
   // by the cache-rebuild guard, which needs to know what the prompt cache was built on.
   const convos = new Map();
   const catalog = new Map();
+  // The CLI does not always list models before its first prompt (print mode never does), and
+  // without a catalog only the static fallback ids are known. Read it once with the same
+  // credentials the request carries, so new releases are found without editing this file.
+  let catalogTried = false;
+  const loadCatalog = async (reqHeaders) => {
+    if (catalogTried || catalog.size) return;
+    catalogTried = true;
+    try {
+      const target = new URL(upstreamURL);
+      const keep = ["authorization", "x-api-key", "anthropic-version", "anthropic-beta", "user-agent"];
+      const headers = Object.fromEntries(keep.filter((k) => reqHeaders[k]).map((k) => [k, reqHeaders[k]]));
+      const res = await fetch(`${upstreamURL.replace(/\/$/, "")}/v1/models?limit=100`, {
+        headers,
+        signal: AbortSignal.timeout(3000),
+      });
+      for (const model of (await res.json()).data ?? []) if (tierOf(model?.id)) catalog.set(model.id, model);
+      debug(`model catalog: ${[...catalog.keys()].join(", ") || "empty"}`);
+    } catch (err) {
+      debug(`could not fetch model catalog: ${err.message}`);
+    }
+  };
   const stateFor = (key) => {
     let s = convos.get(key);
     if (!s) {
@@ -226,6 +264,7 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
             const explaining = prompt?.includes("<jev-explain>");
             let fresh = null;
             if (prompt && !explaining) {
+              await loadCatalog(req.headers);
               const models = claudeModels([...catalog.values()]).filter((model) =>
                 availableTiers().includes(model.tier),
               );

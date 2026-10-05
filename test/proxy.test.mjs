@@ -82,7 +82,24 @@ test("recognises older model versions within a tier", () => {
   assert.equal(tierOf(undefined), null);
 });
 
-test("keeps available Claude model versions as separate Jev choices", () => {
+test("offers only the newest version of each tier, so new releases are picked up automatically", () => {
+  delete process.env.JEV_ALL_VERSIONS;
+  assert.deepEqual(
+    claudeModels([
+      { id: "claude-sonnet-4-6" },
+      { id: "claude-sonnet-5-5" },
+      { id: "claude-sonnet-5" },
+      { id: "claude-opus-4-8" },
+      { id: "claude-opus-5-5" },
+      { id: "claude-haiku-4-5-20251001" },
+    ]).map(({ id }) => id).sort(),
+    ["claude-haiku-4-5-20251001", "claude-opus-5-5", "claude-sonnet-5-5"],
+  );
+});
+
+test("keeps available Claude model versions as separate Jev choices with JEV_ALL_VERSIONS", (t) => {
+  process.env.JEV_ALL_VERSIONS = "1";
+  t.after(() => delete process.env.JEV_ALL_VERSIONS);
   assert.deepEqual(
     claudeModels([
       { id: "claude-opus-5", display_name: "Claude Opus 5" },
@@ -96,6 +113,8 @@ test("keeps available Claude model versions as separate Jev choices", () => {
 });
 
 test("Claude proxy sends exact account models to Jev and routes the chosen version", async (t) => {
+  process.env.JEV_ALL_VERSIONS = "1";
+  t.after(() => delete process.env.JEV_ALL_VERSIONS);
   const seen = [];
   const upstream = http.createServer((req, res) => {
     const chunks = [];
@@ -159,7 +178,7 @@ test("a routed request without metadata is recorded under the conversation key",
 
   const { port, close } = await startProxy({
     upstreamURL: `http://127.0.0.1:${upstream.address().port}`,
-    route: async () => ({ choice: "claude-sonnet-5", confidence: 0.77, ms: 1 }),
+    route: async () => ({ choice: "claude-sonnet-5-5", confidence: 0.77, ms: 1 }),
   });
   t.after(close);
 
@@ -346,7 +365,7 @@ test("routing to opus leaves thinking and effort intact", () => {
     output_config: { effort: "medium" },
   };
   applyTier(body, "opus");
-  assert.equal(body.model, "claude-opus-5");
+  assert.equal(body.model, "claude-opus-5-5");
   assert.deepEqual(body.thinking, { type: "adaptive" });
   assert.deepEqual(body.output_config, { effort: "medium" });
 });
