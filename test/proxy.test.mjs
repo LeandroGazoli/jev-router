@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import net from "node:net";
 import {
   sanitizeSchema,
   newTurnPrompt,
@@ -179,6 +180,21 @@ test("a routed request without metadata is recorded under the conversation key",
   assert.ok(status, "the decision is filed under the conversation key instead of being dropped");
   assert.equal(status.tier, "sonnet");
   assert.equal(status.confidence, 0.77);
+});
+
+test("close() drops an already-open connection instead of waiting for it", async () => {
+  const { port, close } = await startProxy();
+  const socket = net.connect(port, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  const closedQuickly = new Promise((resolve, reject) => {
+    socket.once("close", resolve);
+    setTimeout(() => reject(new Error("connection was still open 500ms after close()")), 500);
+  });
+  close();
+  await closedQuickly;
 });
 
 const withTools = (messages) => ({ tools: [{ name: "Bash" }], messages });

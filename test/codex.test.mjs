@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import net from "node:net";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -262,4 +263,19 @@ test("proxy preserves Codex auth, picker, routing, and native decision output", 
   assert.equal(routeCalls, 1);
   assert.equal(seen[3].body.model, "gpt-5.6-sol");
   assert.equal(readStatus(statusId).metrics.reasoningRequired, 0.91);
+});
+
+test("Codex proxy close() drops an already-open connection instead of waiting for it", async () => {
+  const { port, close } = await startCodexProxy();
+  const socket = net.connect(port, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  const closedQuickly = new Promise((resolve, reject) => {
+    socket.once("close", resolve);
+    setTimeout(() => reject(new Error("connection was still open 500ms after close()")), 500);
+  });
+  close();
+  await closedQuickly;
 });
