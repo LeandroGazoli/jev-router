@@ -356,5 +356,13 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
   });
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { port: server.address().port, close: () => server.close() };
+  // server.close() alone waits for in-flight keep-alive connections to end on their own; a
+  // connection still open when the CLI exits would otherwise leave this process hanging.
+  return {
+    port: server.address().port,
+    close: () => {
+      server.close();
+      server.closeAllConnections();
+    },
+  };
 }
