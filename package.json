@@ -16,7 +16,7 @@
     "jev-dashboard": "bin/jev-dashboard.mjs"
   },
   "scripts": {
-    "test": "node --test test/*.test.mjs",
+    "test": "node --import ./test/helpers/isolate-status-dir.mjs --test test/*.test.mjs",
     "prepublishOnly": "npm test"
   },
   "files": [

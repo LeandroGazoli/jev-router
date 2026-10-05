@@ -14,7 +14,8 @@ import { ensurePrivateDir, FILE_MODE, privateDirPath, writePrivateFile } from ".
 
 // One file per session rather than a shared map, so concurrent jev-claude sessions can never
 // clobber each other's status. Kept in the temp dir so the OS eventually cleans up.
-const DIR = privateDirPath("jev-claude");
+// JEV_STATUS_DIR relocates it; `npm test` uses that to keep test traffic out of the real one.
+const DIR = process.env.JEV_STATUS_DIR || privateDirPath("jev-claude");
 
 // Files not updated for this long belong to finished sessions and are removed.
 export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
