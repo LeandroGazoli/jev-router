@@ -283,11 +283,17 @@ export async function startCodexProxy({
             response.pipe(res);
             return;
           }
+          // Decode with the stream's own stateful UTF-8 decoder rather than chunk.toString()
+          // per chunk: a multi-byte character (accents, Arabic, emoji) can land split across
+          // two HTTP chunks, and decoding each chunk in isolation turns the split bytes into
+          // replacement characters. setEncoding keeps any trailing incomplete sequence buffered
+          // until the next chunk completes it.
+          response.setEncoding("utf8");
           let pending = "";
           let inspected = false;
           response.on("data", (chunk) => {
             if (inspected) return void res.write(chunk);
-            pending += chunk.toString();
+            pending += chunk;
             const end = pending.indexOf("\n\n");
             if (end < 0) return;
             const first = pending.slice(0, end + 2);
