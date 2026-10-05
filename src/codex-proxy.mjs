@@ -6,7 +6,7 @@ import { availableTiers, shouldUseExactModel } from "./config.mjs";
 import { askJev } from "./router.mjs";
 import { decide } from "./policy.mjs";
 import { log } from "./log.mjs";
-import { writeDecision, writeStatus } from "./status.mjs";
+import { appendRouting, writeDecision, writeStatus } from "./status.mjs";
 
 const CHATGPT_BASE_URL = "https://chatgpt.com/backend-api/codex";
 const API_BASE_URL = "https://api.openai.com/v1";
@@ -227,6 +227,18 @@ export async function startCodexProxy({
                 at: Date.now(),
               };
               writeDecision(statusId, routing);
+              // Durable, cross-session record for the dashboard -- deliberately without the
+              // prompt text or the exact Jev exchange that the status file above carries.
+              appendRouting({
+                at: routing.at,
+                cli: "codex",
+                key,
+                tier,
+                model,
+                confidence: routing.confidence,
+                reason: routing.reason,
+                metrics: routing.metrics,
+              });
               debug(`${key} ${current} -> ${tier} (${decision.reason}) | ${prompt.slice(0, 60)}`);
             }
             applyCodexTier(body, tier, models, model);
