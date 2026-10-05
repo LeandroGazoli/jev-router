@@ -257,6 +257,12 @@ short explanation of how to get the right link.
   without starting a server. It is the decision history only
   (time, CLI, tier, model, confidence, reason, complexity scores, conversation id) -- never prompt text.
   CSV cells that a spreadsheet could run as a formula are neutralised.
+- **Tokens:** every request that goes through `jev-claude` / `jev-codex` is counted from the usage the
+  model API itself reports (fresh input, cache read, cache write, output), filed by session, tier and CLI
+  in `usage.jsonl` next to the decision ledger. The page shows them per session and over the selected
+  window; `jev-dashboard --export csv --tokens` (or the Tokens links) exports them. No prompt text is
+  stored, and the routing model's own calls are not counted. Only sessions started after this was added
+  are recorded; a session that was already running must be restarted.
 - It is only available while one of those processes is running; the recorded history
   (`routing.jsonl`) is kept regardless.
 

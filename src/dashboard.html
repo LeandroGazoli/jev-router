@@ -62,6 +62,11 @@
   th { font-weight: 600; color: var(--muted); font-size: 12px; }
   th.num, td.num { text-align: right; }
   td.c-prompt { width: 100%; max-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .c-prompt details > summary { cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .c-prompt details[open] > summary { white-space: normal; }
+  .turns { list-style: none; margin: 4px 0 4px 16px; padding: 0; white-space: normal; color: var(--muted); }
+  .turns li { padding: 1px 0; }
+  .turns time { font-variant-numeric: tabular-nums; }
   .tier { font-weight: 600; font-size: 11px; text-transform: uppercase; }
   .tier-haiku { color: var(--haiku); }
   .tier-sonnet { color: var(--sonnet); }
@@ -112,14 +117,14 @@
     #session-rows tr {
       display: grid;
       grid-template-columns: 11ch auto 1fr auto;
-      grid-template-areas: "id tier . conf" "model model age age" "flags flags flags flags" "prompt prompt prompt prompt";
+      grid-template-areas: "id tier . conf" "model model tokens tokens" "age age age age" "flags flags flags flags" "prompt prompt prompt prompt";
       gap: 0 12px;
       padding: 8px 0;
       border-bottom: 1px solid var(--rule);
     }
     #session-rows td { display: block; border: 0; padding: 1px 0; }
     .c-id { grid-area: id; } .c-tier { grid-area: tier; } .c-conf { grid-area: conf; }
-    .c-model { grid-area: model; } .c-age { grid-area: age; text-align: right; }
+    .c-model { grid-area: model; } .c-age { grid-area: age; } .c-tokens { grid-area: tokens; text-align: right; }
     .c-flags { grid-area: flags; } .c-flags:not(:has(.flag:not([hidden]))) { display: none; }
     #session-rows td.c-prompt {
       grid-area: prompt; width: auto; max-width: none; white-space: normal;
@@ -137,7 +142,7 @@
     <p class="sub">What the router chose for each coding-CLI session, and how those choices are distributed. Read-only: viewing this page never runs the router.</p>
     <p class="meta">
       <span id="freshness">Loading…</span>
-      <span><span id="export-label">Export:</span> <a id="export-csv" href="#">CSV</a> · <a id="export-json" href="#">JSON</a> (no prompt text)</span>
+      <span><span id="export-label">Export:</span> Decisions <a id="export-csv" href="#">CSV</a> · <a id="export-json" href="#">JSON</a> · Tokens <a id="export-tokens-csv" href="#">CSV</a> · <a id="export-tokens-json" href="#">JSON</a> (no prompt text)</span>
     </p>
     <div id="banner" class="banner" role="status"></div>
   </header>
@@ -155,6 +160,7 @@
               <th role="columnheader">Tier</th>
               <th role="columnheader">Model</th>
               <th role="columnheader" class="num" title="The probability the routing model gave to the model it chose. It does not measure whether the choice was right.">Confidence</th>
+              <th role="columnheader" class="num" title="Tokens the session's requests used, as the API reported them. Includes cache reads; hover a figure for the breakdown.">Tokens</th>
               <th role="columnheader">Last decision</th>
               <th role="columnheader">Flags</th>
               <th role="columnheader">Prompt</th>
@@ -186,6 +192,16 @@
       </div>
     </section>
 
+    <section class="panel" aria-labelledby="h-tokens">
+      <h2 id="h-tokens">Tokens</h2>
+      <p class="note" id="tokens-note">Loading…</p>
+      <div class="cal-grid" id="tokens-grid" hidden>
+        <div><h3>By kind</h3><div id="rows-token-kind"></div></div>
+        <div><h3>By tier</h3><div id="rows-token-tier"></div></div>
+        <div><h3>By CLI</h3><div id="rows-token-cli"></div></div>
+      </div>
+    </section>
+
     <details class="help panel">
       <summary>How to read this page</summary>
       <dl>
@@ -195,8 +211,9 @@
         <dt>Overruled</dt><dd>Policy changed the router's pick: the risk floor, the low-confidence rules, the cache-rebuild guard, a one-step upgrade limit, or an unavailable tier.</dd>
         <dt>Unavailable</dt><dd>The routing model could not be reached, so the current model was kept.</dd>
         <dt>Manual</dt><dd>You picked a model yourself, so routing is paused in that session.</dd>
-        <dt>Idle</dt><dd>No new decision for 15 minutes.</dd>
-        <dt>Where it comes from</dt><dd>Sessions come from per-session files kept for 7 days. Calibration comes from the decision ledger (<code>routing.jsonl</code>), which stores no prompt text. Confidence bands use this process's <code>JEV_MIN_CONFIDENCE</code> and <code>JEV_STEP_UP_CONFIDENCE</code>.</dd>
+        <dt>Idle</dt><dd>No request from the session for 15 minutes. A long tool loop keeps a session active even when it makes no new decision.</dd>
+        <dt>Tokens</dt><dd>What the model API itself reported for each request, in four kinds that do not overlap: fresh input, cache reads, cache writes and output. Cache reads are usually most of a long session and cost a fraction of fresh input, so they are shown separately instead of blended. Only requests that went through the router are counted, from when this version started recording; the routing model's own calls are not included.</dd>
+        <dt>Where it comes from</dt><dd>Sessions come from per-session files kept for 7 days. Calibration comes from the decision ledger (<code>routing.jsonl</code>) and Tokens from the usage ledger (<code>usage.jsonl</code>); neither stores prompt text. Confidence bands use this process's <code>JEV_MIN_CONFIDENCE</code> and <code>JEV_STEP_UP_CONFIDENCE</code>.</dd>
       </dl>
     </details>
   </main>
@@ -231,6 +248,10 @@
 
   const pct = (value) => Math.round(value * 100) + "%";
   const share = (count, total) => (!total ? "" : count > 0 && count / total < 0.01 ? "<1%" : pct(count / total));
+  const fmtTokens = (n) => (n >= 1e6 ? (n / 1e6).toFixed(n >= 1e7 ? 0 : 1) + "M" : n >= 1e4 ? Math.round(n / 1e3) + "k" : n >= 1e3 ? (n / 1e3).toFixed(1) + "k" : String(n));
+  const tokenBreakdown = (t) =>
+    "Fresh input " + t.input.toLocaleString() + " · Output " + t.output.toLocaleString() + " · Cache read " + t.cacheRead.toLocaleString() + " · Cache write " + t.cacheWrite.toLocaleString() + " · " + t.requests + (t.requests === 1 ? " request" : " requests");
+  const fmtTime = (ms) => new Date(ms).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
   const fmtWhen = (ms) => new Date(ms).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
   function ago(ms) {
@@ -287,17 +308,36 @@
     const none = (text) => el("span", { class: "none" }, text);
     const when = Number.isFinite(s.at) ? new Date(s.at) : null;
     const flags = flagsFor(s, thresholds).map(([text, fault, why]) => el("span", { class: "flag" + (fault ? " fault" : ""), title: why }, text));
-    flags.push(el("span", { class: "flag idle-flag", hidden: true, title: "No new decision for 15 minutes." }, "Idle"));
+    flags.push(el("span", { class: "flag idle-flag", hidden: true, title: "No request from this session for 15 minutes." }, "Idle"));
+    const text = s.manual ? "Model chosen by hand; routing is paused in this session." : (s.prompt ?? "");
+    // More than one decision on record: the prompt cell opens into the session's recent turns.
+    const promptCell =
+      !s.manual && s.recent.length > 1
+        ? el(
+            "details",
+            {},
+            el("summary", { title: s.prompt }, text),
+            el(
+              "ol",
+              { class: "turns" },
+              ...s.recent.map((turn) =>
+                el("li", {}, el("time", {}, fmtTime(turn.at)), " ", tierTag(turn.tier), " ", turn.confidence == null ? "" : pct(turn.confidence) + " ", turn.prompt ?? ""),
+              ),
+            ),
+          )
+        : text;
+    const active = Number.isFinite(s.activeAt) ? s.activeAt : s.at;
     return el(
       "tr",
-      { role: "row", "data-at": Number.isFinite(s.at) ? s.at : null },
+      { role: "row", "data-at": Number.isFinite(s.at) ? s.at : null, "data-active": Number.isFinite(active) ? active : null },
       cell("c-id", shortId(s.sessionId), s.sessionId),
       cell("c-tier", s.manual ? none("n/a") : tierTag(s.tier)),
       cell("c-model", s.manual || !s.model ? none("n/a") : s.model),
       cell("c-conf num", s.manual || s.confidence == null ? none("n/a") : pct(s.confidence)),
+      cell("c-tokens num", s.tokens ? fmtTokens(s.tokens.total) : none("n/a"), s.tokens ? tokenBreakdown(s.tokens) : "Not recorded for this session."),
       cell("c-age", el("time", { datetime: when ? when.toISOString() : null, title: when ? when.toLocaleString() : null }), null),
       cell("c-flags", flags),
-      cell("c-prompt", s.manual ? "Model chosen by hand; routing is paused in this session." : (s.prompt ?? ""), s.manual ? null : s.prompt),
+      cell("c-prompt", promptCell, s.manual || s.recent.length > 1 ? null : s.prompt),
     );
   }
 
@@ -306,16 +346,20 @@
     $("sessions-empty").hidden = list.length > 0;
     $("sessions-table").hidden = list.length === 0;
     $("sessions-note").textContent = list.length
-      ? list.length + (list.length === 1 ? " session" : " sessions") + " in the last 7 days. After 15 minutes without a decision a session is dimmed and marked Idle."
+      ? list.length + (list.length === 1 ? " session" : " sessions") + " in the last 7 days. After 15 minutes without a request a session is dimmed and marked Idle."
       : "";
     const seen = new Set();
     list.forEach((s, i) => {
       seen.add(s.sessionId);
-      const sig = JSON.stringify([s.tier, s.model, s.confidence, s.reason, s.family, s.at, s.manual, s.prompt, thresholds.minConfidence]);
+      const sig = JSON.stringify([s.tier, s.model, s.confidence, s.reason, s.family, s.at, s.activeAt, s.manual, s.prompt, s.tokens, s.recent, thresholds.minConfidence]);
       let entry = rows.get(s.sessionId);
       if (!entry || entry.sig !== sig) {
         const tr = buildRow(s, thresholds);
-        if (entry) entry.tr.replaceWith(tr);
+        if (entry) {
+          // A row someone has opened stays open when new data arrives.
+          if (entry.tr.querySelector("details")?.open) tr.querySelector("details")?.setAttribute("open", "");
+          entry.tr.replaceWith(tr);
+        }
         entry = { tr, sig };
         rows.set(s.sessionId, entry);
       }
@@ -333,10 +377,12 @@
 
   // ---- calibration ----
 
-  function statRow(label, description, count, total) {
+  // `shown` is what to print when it differs from the number the share is computed from
+  // (token counts print compactly but the share needs the exact figure).
+  function statRow(label, description, shown, total, exact = shown) {
     const what = el("span", { class: "what" }, label);
     if (description) what.append(el("span", { class: "desc" }, description));
-    return el("div", { class: "stat" }, what, el("span", { class: "count" }, String(count), el("span", { class: "pct" }, share(count, total))));
+    return el("div", { class: "stat" }, what, el("span", { class: "count" }, String(shown), el("span", { class: "pct" }, share(exact, total))));
   }
 
   function fill(id, nodes) {
@@ -379,10 +425,37 @@
     fill("rows-cli", Object.entries(stats.byCli).sort((a, c) => c[1] - a[1]).map(([cli, n]) => statRow(cli, "", n, total)));
   }
 
+  // ---- tokens ----
+
+  function renderTokens(usage, w) {
+    const total = usage.total;
+    const label = WINDOW_LABELS[w];
+    $("tokens-note").textContent = usage.requests
+      ? fmtTokens(total) + " tokens across " + usage.requests + (usage.requests === 1 ? " request" : " requests") + ", " + label + ". Counted from the API's own report; the routing model's calls are not included."
+      : "No token usage recorded in the " + label + ". Requests are counted from when this version started recording, so sessions that were already running show nothing until they are restarted.";
+    $("tokens-grid").hidden = !usage.requests;
+    if (!usage.requests) return;
+
+    const kinds = [
+      ["Fresh input", "Prompt tokens not served from the cache.", usage.input],
+      ["Cache read", "Prompt tokens served from the cache; a fraction of the price of fresh input.", usage.cacheRead],
+      ["Cache write", "Prompt tokens stored in the cache.", usage.cacheWrite],
+      ["Output", "Tokens the model generated.", usage.output],
+    ];
+    fill("rows-token-kind", kinds.map(([name, why, n]) => statRow(name, why, fmtTokens(n), total, n)));
+
+    const byTier = Object.entries(usage.byTier).sort(([a], [b]) => {
+      const ia = TIER_ORDER.indexOf(a), ib = TIER_ORDER.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+    });
+    fill("rows-token-tier", byTier.map(([tier, t]) => statRow(tierTag(tier), t.requests + (t.requests === 1 ? " request" : " requests"), fmtTokens(t.total), total, t.total)));
+    fill("rows-token-cli", Object.entries(usage.byCli).sort((a, c) => c[1].total - a[1].total).map(([cli, t]) => statRow(cli, t.requests + (t.requests === 1 ? " request" : " requests"), fmtTokens(t.total), total, t.total)));
+  }
+
   // ---- window selector, export, refresh loop ----
 
-  function exportUrl(format) {
-    return "/api/export?format=" + format + "&window=" + windowName + "&token=" + encodeURIComponent(token);
+  function exportUrl(format, kind) {
+    return "/api/export?format=" + format + (kind ? "&kind=" + kind : "") + "&window=" + windowName + "&token=" + encodeURIComponent(token);
   }
 
   function applyWindow() {
@@ -393,6 +466,8 @@
     $("export-label").textContent = "Export, " + WINDOW_LABELS[windowName] + ":";
     $("export-csv").href = exportUrl("csv");
     $("export-json").href = exportUrl("json");
+    $("export-tokens-csv").href = exportUrl("csv", "tokens");
+    $("export-tokens-json").href = exportUrl("json", "tokens");
   }
 
   async function refresh() {
@@ -409,6 +484,7 @@
         setState("ok");
         renderSessions(sessions, stats.thresholds);
         renderStats(stats);
+        renderTokens(stats.usage, asked);
       }
     } catch (err) {
       setState(err.auth ? "auth" : "stale");
@@ -428,7 +504,10 @@
       const at = Number(tr.dataset.at);
       const known = tr.dataset.at !== undefined && Number.isFinite(at);
       tr.querySelector("time").textContent = known ? ago(now - at) : "unknown";
-      const idle = known && now - at > IDLE_AFTER_MS;
+      // Idleness follows the last request, so a session working through a long tool loop is not
+      // marked Idle just because it has not made a new routing decision.
+      const active = Number(tr.dataset.active);
+      const idle = tr.dataset.active !== undefined && Number.isFinite(active) && now - active > IDLE_AFTER_MS;
       tr.classList.toggle("idle", idle);
       tr.querySelector(".idle-flag").hidden = !idle;
     }
@@ -439,6 +518,7 @@
       windowName = input.value;
       applyWindow();
       $("cal-note").textContent = "Loading…";
+      $("tokens-note").textContent = "Loading…";
       refresh();
     });
   }
