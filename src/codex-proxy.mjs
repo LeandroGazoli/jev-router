@@ -35,27 +35,25 @@ export function codexTierOf(model) {
   return /^gpt-/i.test(model ?? "") ? "sonnet" : null;
 }
 
-/** Exact GPT models in Codex's account catalog; configured ids are the cold-start fallback. */
+/**
+ * One Jev candidate per tier, built from the configured (or default) model id for that tier --
+ * never from the account catalog alone. A model configured via JEV_CODEX_*_MODEL that has not
+ * propagated to the account's catalog yet (or belongs to a different account) must still be a
+ * candidate Jev can choose; filtering candidates down to whatever the catalog happens to list
+ * silently made such a configured model invisible to the router. The catalog is only consulted
+ * here for a nicer description when it does have a matching entry.
+ */
 export function codexModels(models = new Map()) {
-  const available = [...models.values()]
-    .filter((model) => model.slug !== CODEX_AUTO_MODEL && model.supported_in_api !== false)
-    .map((model) => ({
-      id: model.slug,
-      tier: codexTierOf(model.slug),
-      description: [
-        model.display_name,
-        model.description,
-        model.context_window && `${model.context_window} context tokens`,
-      ].filter(Boolean).join("; "),
-    }))
-    .filter((model) => model.tier);
-  return available.length
-    ? available
-    : Object.keys(DEFAULT_MODELS).map((tier) => ({
-        id: codexModelOf(tier),
-        tier,
-        description: codexModelOf(tier),
-      }));
+  return Object.keys(DEFAULT_MODELS).map((tier) => {
+    const id = codexModelOf(tier);
+    const info = models.get(id);
+    const description = info
+      ? [info.display_name, info.description, info.context_window && `${info.context_window} context tokens`]
+          .filter(Boolean)
+          .join("; ") || id
+      : id;
+    return { id, tier, description };
+  });
 }
 
 const modelForTier = (models, tier) =>

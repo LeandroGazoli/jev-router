@@ -110,15 +110,33 @@ test("maps tiers and clamps unsupported reasoning effort", () => {
   assert.equal(body.reasoning.effort, "medium");
 });
 
-test("sends exact available GPT models to Jev", () => {
+test("sends one candidate per tier to Jev, enriched with catalog metadata when present", () => {
   const models = new Map([
     ["gpt-5.6-terra", { slug: "gpt-5.6-terra", display_name: "GPT-5.6-Terra" }],
     ["gpt-5.6-sol", { slug: "gpt-5.6-sol", display_name: "GPT-5.6-Sol" }],
   ]);
   assert.deepEqual(codexModels(models).map(({ id, tier }) => ({ id, tier })), [
+    { id: "gpt-5.6-luna", tier: "haiku" },
     { id: "gpt-5.6-terra", tier: "sonnet" },
     { id: "gpt-5.6-sol", tier: "opus" },
+    { id: "gpt-6-astra", tier: "fable" },
   ]);
+  const sonnet = codexModels(models).find((model) => model.tier === "sonnet");
+  assert.equal(sonnet.description, "GPT-5.6-Terra");
+  const haiku = codexModels(models).find((model) => model.tier === "haiku");
+  assert.equal(haiku.description, "gpt-5.6-luna", "falls back to the bare id when not in the catalog");
+});
+
+test("a model configured via JEV_CODEX_*_MODEL is a candidate even if absent from the account catalog", (t) => {
+  t.before(() => { process.env.JEV_CODEX_STRONG_MODEL = "gpt-5.6-custom"; });
+  t.after(() => { delete process.env.JEV_CODEX_STRONG_MODEL; });
+  // The account catalog only lists the stock models; the configured one has not propagated.
+  const models = new Map([["gpt-5.6-sol", { slug: "gpt-5.6-sol", display_name: "GPT-5.6-Sol" }]]);
+  const candidates = codexModels(models);
+  assert.ok(
+    candidates.some((model) => model.id === "gpt-5.6-custom" && model.tier === "opus"),
+    "the configured opus model must be visible to Jev even though the catalog does not list it",
+  );
 });
 
 test("surfaces routing as a native commentary event", () => {
@@ -185,7 +203,12 @@ test("proxy preserves Codex auth, picker, routing, and native decision output", 
     apiBaseURL: `${upstreamURL}/v1`,
     route: async ({ models }) => {
       routeCalls++;
-      assert.deepEqual(models.map((model) => model.id), ["gpt-5.6-terra", "gpt-5.6-sol"]);
+      // One candidate per non-fable tier is always offered, using the catalog's description
+      // when it has a matching entry (haiku here falls back to the bare default id).
+      assert.deepEqual(
+        models.map((model) => model.id),
+        ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
+      );
       return {
         choice: "gpt-5.6-sol",
         confidence: 0.91,
