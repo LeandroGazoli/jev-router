@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Jev Router dashboard</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 14px/1.5 -apple-system, "Segoe UI", sans-serif;
+    margin: 0;
+    padding: 24px;
+    background: Canvas;
+    color: CanvasText;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: GrayText; margin: 0 0 24px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; }
+  section {
+    border: 1px solid color-mix(in srgb, CanvasText 15%, transparent);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  section h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: GrayText; margin: 0 0 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  td, th { text-align: left; padding: 4px 6px; border-bottom: 1px solid color-mix(in srgb, CanvasText 10%, transparent); }
+  .tier { font-weight: 600; text-transform: uppercase; font-size: 11px; }
+  .tier-haiku { color: #2563eb; }
+  .tier-sonnet { color: #059669; }
+  .tier-opus { color: #d97706; }
+  .tier-fable { color: #7c3aed; }
+  .prompt { max-width: 360px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .manual { color: GrayText; font-style: italic; }
+  .error { color: #dc2626; }
+  .stat { display: flex; justify-content: space-between; padding: 2px 0; }
+  .empty { color: GrayText; font-style: italic; }
+</style>
+</head>
+<body>
+  <h1>Jev Router</h1>
+  <p class="sub" id="subtitle">Read-only -- never calls the router itself.</p>
+  <div class="grid">
+    <section>
+      <h2>Active sessions</h2>
+      <table id="sessions"><tbody><tr><td class="empty">loading…</td></tr></tbody></table>
+    </section>
+    <section>
+      <h2>Decisions by tier (ledger)</h2>
+      <div id="byTier"></div>
+    </section>
+    <section>
+      <h2>Decisions by CLI (ledger)</h2>
+      <div id="byCli"></div>
+    </section>
+  </div>
+<script>
+  const token = new URLSearchParams(location.search).get("token") ?? "";
+  const authed = (path) => fetch(path + (path.includes("?") ? "&" : "?") + "token=" + encodeURIComponent(token));
+
+  function escapeHtml(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  async function refreshSessions() {
+    const res = await authed("/api/sessions");
+    if (!res.ok) {
+      document.getElementById("subtitle").textContent = "Auth failed (" + res.status + ") -- check the token in the URL.";
+      document.getElementById("subtitle").className = "sub error";
+      return;
+    }
+    const sessions = await res.json();
+    const body = document.getElementById("sessions");
+    if (!sessions.length) {
+      body.innerHTML = "<tr><td class='empty'>no sessions yet</td></tr>";
+      return;
+    }
+    body.innerHTML =
+      "<thead><tr><th>Session</th><th>Tier</th><th>Confidence</th><th>Prompt</th></tr></thead><tbody>" +
+      sessions
+        .map((s) => {
+          if (s.manual) {
+            return "<tr><td>" + escapeHtml(s.sessionId) + "</td><td colspan='3' class='manual'>manual model selected</td></tr>";
+          }
+          const conf = s.confidence == null ? "n/a" : Math.round(s.confidence * 100) + "%";
+          return (
+            "<tr><td>" + escapeHtml(s.sessionId) + "</td>" +
+            "<td class='tier tier-" + escapeHtml(s.tier ?? "") + "'>" + escapeHtml(s.tier ?? "?") + "</td>" +
+            "<td>" + conf + "</td>" +
+            "<td class='prompt' title=\"" + escapeHtml(s.prompt ?? "") + "\">" + escapeHtml(s.prompt ?? "") + "</td></tr>"
+          );
+        })
+        .join("") +
+      "</tbody>";
+  }
+
+  function renderCounts(elId, counts) {
+    const el = document.getElementById(elId);
+    const entries = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    el.innerHTML = entries.length
+      ? entries.map(([k, v]) => "<div class='stat'><span>" + escapeHtml(k) + "</span><strong>" + v + "</strong></div>").join("")
+      : "<div class='empty'>no decisions recorded yet</div>";
+  }
+
+  async function refreshLedger() {
+    const res = await authed("/api/ledger?limit=2000");
+    if (!res.ok) return;
+    const { stats } = await res.json();
+    renderCounts("byTier", stats.byTier);
+    renderCounts("byCli", stats.byCli);
+  }
+
+  function refresh() {
+    refreshSessions();
+    refreshLedger();
+  }
+
+  refresh();
+  setInterval(refresh, 3000);
+</script>
+</body>
+</html>

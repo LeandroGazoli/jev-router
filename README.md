@@ -223,6 +223,20 @@ Both launchers send Jev the exact models in the signed-in account's native catal
 versions such as `claude-opus-4-8` and `claude-opus-5` remain separate choices. Static model
 ids are used only until the CLI fetches its catalog.
 
+## Dashboard
+
+```bash
+jev-dashboard
+# [jev] dashboard: http://127.0.0.1:8787/?token=...
+```
+
+Opens a small, read-only web page showing active sessions (tier, confidence, prompt) and
+aggregate decision counts from the durable routing ledger. It never calls Jev or the router
+itself -- it only reads the same status files the status line and `/jev-explain` already use,
+so viewing it costs nothing extra. The token in the URL is required on every request (the
+status files carry prompt text); keep that link private. Configure the port with
+`JEV_DASHBOARD_PORT` or `--port`; default `8787`.
+
 ## Compatibility notes
 
 - Claude Code needs schema normalisation for older MCP JSON Schema fields when a custom base

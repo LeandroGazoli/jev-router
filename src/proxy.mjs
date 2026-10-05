@@ -15,7 +15,7 @@ import {
 import { askJev } from "./router.mjs";
 import { decide } from "./policy.mjs";
 import { log } from "./log.mjs";
-import { writeDecision, writeStatus } from "./status.mjs";
+import { appendRouting, writeDecision, writeStatus } from "./status.mjs";
 
 const ANTHROPIC_BASE_URL = "https://api.anthropic.com";
 const debug = (line) => process.env.JEV_DEBUG && log(line);
@@ -280,7 +280,20 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
             // key is stable for the same conversation and is already what `debug` prints, so
             // it is the identifier a user can pass to `jev-explain` for a print-mode run.
             if (fresh && !explaining) {
-              writeDecision(sessionOf(body) || key, { tier, ...fresh, at: Date.now() });
+              const at = Date.now();
+              writeDecision(sessionOf(body) || key, { tier, ...fresh, at });
+              // Durable, cross-session record for the dashboard -- deliberately without the
+              // prompt text or the exact Jev exchange that the status file above carries.
+              appendRouting({
+                at,
+                cli: "claude",
+                key,
+                tier,
+                model: fresh.model,
+                confidence: fresh.confidence,
+                reason: fresh.reason,
+                metrics: fresh.metrics,
+              });
             }
           }
           out = Buffer.from(JSON.stringify(body));
