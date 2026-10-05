@@ -1,3 +1,6 @@
+import { tierOf as claudeTierOf } from "./config.mjs";
+import { codexTierOf } from "./codex-proxy.mjs";
+
 const WIDTH = 33;
 const row = (text = "") => `│ ${text.slice(0, WIDTH - 2).padEnd(WIDTH - 2)} │`;
 const metric = (value) => (Number.isFinite(value) ? value.toFixed(2) : "n/a");
@@ -10,6 +13,14 @@ const wrapped = (label, value) => {
   }
   return lines.map(row);
 };
+
+/**
+ * The model question's answer is an exact model id (see config.questionForModels), not a tier
+ * name, so it has to be mapped back to a tier for display. Claude ids carry the tier name as a
+ * substring (config.tierOf); Codex ids use code names (codexTierOf). A bare tier name, as used
+ * by older/simpler test fixtures, resolves through either one unchanged.
+ */
+const tierNameOf = (id) => claudeTierOf(id) ?? codexTierOf(id) ?? id;
 
 const decision = (reason = "") => {
   if (reason.includes("override")) return "prompt override";
@@ -27,7 +38,8 @@ export function formatExplanation(status) {
 
   const m = status.metrics ?? {};
   const request = status.jev?.request?.state;
-  const recommendation = status.jev?.response?.answers?.model_tier?.choice ?? status.tier ?? "unknown";
+  const modelChoice = status.jev?.response?.answers?.model?.choice;
+  const recommendation = (modelChoice && tierNameOf(modelChoice)) ?? status.tier ?? "unknown";
   return [
     `┌${"─".repeat(WIDTH)}┐`,
     row("Jev Router"),

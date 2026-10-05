@@ -279,3 +279,53 @@ test("Codex proxy close() drops an already-open connection instead of waiting fo
   close();
   await closedQuickly;
 });
+
+test("preserves a multi-byte character split across two response chunks", async (t) => {
+  // Build the SSE body as raw bytes, then cut it mid-character: the two UTF-8 bytes of 'é'
+  // (0xC3 0xA9) land in separate HTTP chunks. A naive chunk.toString() per chunk decodes each
+  // half independently and turns the split bytes into replacement characters.
+  const prefix = Buffer.from('event: response.created\ndata: {"message":"h');
+  const rest = Buffer.from(
+    'éllo 😀"}\n\n' + 'event: response.completed\ndata: {"type":"response.completed"}\n\n',
+  );
+  const full = Buffer.concat([prefix, rest]);
+  const splitAt = prefix.length + 1; // after 0xC3, before 0xA9
+
+  const upstream = http.createServer((req, res) => {
+    req.on("data", () => {});
+    req.on("end", () => {
+      if (req.url.startsWith("/backend-api/codex/models")) {
+        res.setHeader("content-type", "application/json");
+        return res.end(JSON.stringify({ models: [{ slug: "gpt-5.6-sol", supported_in_api: true, visibility: "list" }] }));
+      }
+      res.write(full.subarray(0, splitAt));
+      setTimeout(() => res.end(full.subarray(splitAt)), 10);
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => upstream.close());
+  const upstreamURL = `http://127.0.0.1:${upstream.address().port}`;
+
+  const { port, close } = await startCodexProxy({
+    chatgptBaseURL: `${upstreamURL}/backend-api/codex`,
+    apiBaseURL: `${upstreamURL}/v1`,
+    route: async () => ({ choice: "gpt-5.6-sol", confidence: 0.9, response: { answers: {} } }),
+    statusId: `codex-utf8-${process.pid}`,
+  });
+  t.after(close);
+
+  const response = await fetch(`http://127.0.0.1:${port}/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "jev-router",
+      input: [
+        { type: "additional_tools", role: "developer", tools: [{}] },
+        { role: "user", content: [{ type: "input_text", text: "say héllo 😀" }] },
+      ],
+    }),
+  }).then((r) => r.text());
+
+  assert.ok(!response.includes("�"), `response was corrupted: ${response}`);
+  assert.match(response, /héllo 😀/);
+});
