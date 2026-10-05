@@ -355,3 +355,11 @@ test("the key survives metadata that is not JSON", () => {
   const body = { metadata: { user_id: "not-json" }, messages: [{ role: "user", content: "hi" }] };
   assert.doesNotThrow(() => conversationKey(body));
 });
+
+test("ignores a trailing system message appended by newer Claude Code", () => {
+  const body = withTools([
+    { role: "user", content: [{ type: "text", text: "fix the bug" }] },
+    { role: "system", content: [{ type: "text", text: "# Environment" }] },
+  ]);
+  assert.equal(newTurnPrompt(body), "fix the bug");
+});

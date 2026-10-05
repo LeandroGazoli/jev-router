@@ -88,3 +88,34 @@ test("accepts exact model changes within the same tier", () => {
   assert.equal(shouldUseExactModel("jev/no-change", "opus", "opus"), true);
   assert.equal(shouldUseExactModel("low-confidence-no-downgrade/no-change", "opus", "opus"), false);
 });
+
+test("risk floor keeps a complex task off the cheapest tier", () => {
+  const out = decide({
+    prompt: "x",
+    jev: { choice: "haiku", confidence: 0.9, metrics: { taskComplexity: 0.6 } },
+    current: "sonnet",
+    available: ["haiku", "sonnet", "opus"],
+  });
+  assert.equal(out.tier, "sonnet");
+});
+
+test("a doubtful multi-tier jump climbs one step", () => {
+  const out = decide({
+    prompt: "x",
+    jev: { choice: "opus", confidence: 0.5 },
+    current: "haiku",
+    available: ["haiku", "sonnet", "opus"],
+  });
+  assert.equal(out.tier, "sonnet");
+  assert.match(out.reason, /gradual-step/);
+});
+
+test("a confident multi-tier jump goes straight to the target", () => {
+  const out = decide({
+    prompt: "x",
+    jev: { choice: "opus", confidence: 0.95 },
+    current: "haiku",
+    available: ["haiku", "sonnet", "opus"],
+  });
+  assert.equal(out.tier, "opus");
+});

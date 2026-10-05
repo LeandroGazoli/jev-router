@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { routingEnabled } from "../src/router.mjs";
 import { spawn } from "node:child_process";
 import { readFileSync, writeFileSync, mkdirSync, accessSync, constants } from "node:fs";
 import { homedir, tmpdir } from "node:os";
@@ -122,7 +123,7 @@ if (!claude) {
   process.exit(1);
 }
 
-if (process.env.JEV_API_KEY || process.env.TYPESAFE_API_KEY) {
+if (routingEnabled()) {
   const { port, close } = await startProxy();
   env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
   env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
@@ -137,8 +138,7 @@ if (process.env.JEV_API_KEY || process.env.TYPESAFE_API_KEY) {
   }
 } else {
   process.stderr.write(
-    `[jev] no JEV_API_KEY found - starting Claude Code without routing\n` +
-      `[jev] set it in ${join(homedir(), ".jev-claude.env")} to enable routing\n`,
+    `[jev] JEV_DISABLE=1 - starting Claude Code without routing\n`,
   );
 }
 

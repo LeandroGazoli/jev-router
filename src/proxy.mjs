@@ -7,6 +7,7 @@ import {
   tierOf,
   idOf,
   availableTiers,
+  AUX_TIER,
   tierSpec,
   isAuto,
   shouldUseExactModel,
@@ -54,7 +55,8 @@ export function sanitizeSchema(node) {
  */
 export function newTurnPrompt(body) {
   if (!Array.isArray(body?.tools) || body.tools.length === 0) return null; // auxiliary call
-  const last = body?.messages?.[body.messages.length - 1];
+  // Newer Claude Code appends an environment block with role "system" after the user turn.
+  const last = body?.messages?.findLast((message) => message.role !== "system");
   if (!last || last.role !== "user") return null;
   let text;
   if (typeof last.content === "string") {
@@ -257,7 +259,11 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
             }
             // The sentinel is not a real model, so every routed request must be rewritten,
             // including follow-ups that reuse the tier chosen for the turn.
-            const tier = state.tier ?? current;
+            // Claude Code's own tool-less calls (progress summaries) start a conversation that
+            // was never classified; they must not default to the strongest tier.
+            const isAux = !Array.isArray(body.tools) || body.tools.length === 0;
+            const auxTier = availableTiers().includes(AUX_TIER) ? AUX_TIER : current;
+            const tier = state.tier ?? (isAux ? auxTier : current);
             const model = state.model ?? idOf(tier);
             debug(`${key} rewrite ${body.model} -> ${model}`);
             applyTier(body, tier, model);

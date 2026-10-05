@@ -1,5 +1,8 @@
 // Every routing decision knob lives here, so the whole policy is reviewable in one file.
-import { choice, score } from "@typesafe-ai/sdk";
+
+// Question descriptors read by the local JevK5 client in router.mjs (same shape the TypeSafe SDK builds).
+const choice = (instructions, criteria) => ({ type: "choice", instructions, criteria });
+const score = (instructions, criteria) => ({ type: "score", instructions, criteria });
 
 /**
  * Model tiers, cheapest first. `id` is what goes into the API request body; `family` is the
@@ -47,9 +50,14 @@ export const availableTiers = () =>
 
 export const THRESHOLDS = {
   /** Below this Jev confidence we refuse to downgrade and cap upgrades at `uncertainCeiling`. */
-  minConfidence: 0.3,
+  minConfidence: Number(process.env.JEV_MIN_CONFIDENCE ?? 0.3),
   /** Safest tier to land on when Jev is unsure. */
   uncertainCeiling: "sonnet",
+  /** Below this confidence a jump of more than one tier is shortened to one step up. */
+  stepUpConfidence: Number(process.env.JEV_STEP_UP_CONFIDENCE ?? 0.8),
+  /** Task-complexity score (0-1) from which Haiku is never used. */
+  riskFloor: Number(process.env.JEV_RISK_FLOOR ?? 0.5),
+  riskFloorTier: "sonnet",
   /**
    * Switching models invalidates the prompt cache; the next turn re-sends the whole
    * conversation. Measured at ~23.6k cache-creation tokens switching into Opus, so a
@@ -57,14 +65,16 @@ export const THRESHOLDS = {
    */
   downgradeMaxContextTokens: 20000,
   /**
-   * Per-attempt Jev HTTP timeout and the hard wall-clock deadline for the whole routing
-   * call. Measured: ~300-350ms warm, ~900-1000ms on the first call (TLS handshake), so the
-   * deadline leaves room for one retry after a cold-start timeout.
+   * Per-attempt timeout and hard wall-clock deadline for the whole routing call against the
+   * local llama-server. Generous because the first call after the model loads is slow.
    */
-  jevTimeoutMs: 1500,
-  jevDeadlineMs: 3000,
-  jevMaxRetries: 1,
+  jevTimeoutMs: 20000,
+  jevDeadlineMs: 25000,
+  jevMaxRetries: 0,
 };
+
+/** Tier for Claude Code's own tool-less calls (progress summaries, titles); they are not engineering work. */
+export const AUX_TIER = process.env.JEV_AUX_TIER ?? "haiku";
 
 export const CONTEXT_WINDOW_TOKENS = 200000;
 

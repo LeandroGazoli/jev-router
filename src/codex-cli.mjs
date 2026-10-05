@@ -1,3 +1,4 @@
+import { routingEnabled } from "./router.mjs";
 import { spawn } from "node:child_process";
 import { accessSync, constants, copyFileSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
@@ -93,14 +94,13 @@ export async function runCodex() {
   let close = () => {};
   const statusId = `codex-${process.pid}`;
   process.env.JEV_CODEX_STATUS_ID = statusId;
-  if (process.env.JEV_API_KEY || process.env.TYPESAFE_API_KEY) {
+  if (routingEnabled()) {
     const proxy = await startCodexProxy({ statusId });
     close = proxy.close;
     args = codexArgs(`http://127.0.0.1:${proxy.port}`, args);
   } else {
     process.stderr.write(
-      "[jev] no JEV_API_KEY found - starting Codex without routing\n" +
-        `[jev] add JEV_API_KEY=... to ${join(homedir(), ".jev-router.env")} and restart jev-codex\n`,
+      "[jev] JEV_DISABLE=1 - starting Codex without routing\n",
     );
   }
 

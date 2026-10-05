@@ -40,8 +40,5 @@
     "access": "public",
     "registry": "https://registry.npmjs.org"
   },
-  "license": "MIT",
-  "dependencies": {
-    "@typesafe-ai/sdk": "^0.6.0"
-  }
+  "license": "MIT"
 }

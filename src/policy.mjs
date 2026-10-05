@@ -47,6 +47,14 @@ export function decide({ prompt, jev, current, available, contextTokens = 0 }) {
   if (!jev || !TIER_NAMES.includes(jev.choice)) return settle(current, "jev-unavailable");
 
   let target = jev.choice;
+  let reason = "jev";
+
+  // Complexity/risk floor: a task that scores high is never handed to the cheapest tier.
+  const risk = jev.metrics?.taskComplexity;
+  if (risk != null && risk >= THRESHOLDS.riskFloor && rankOf(target) < rankOf(THRESHOLDS.riskFloorTier)) {
+    target = THRESHOLDS.riskFloorTier;
+    reason = "risk-floor";
+  }
 
   if (jev.confidence < THRESHOLDS.minConfidence) {
     if (rankOf(target) < rankOf(current)) return settle(current, "low-confidence-no-downgrade");
@@ -58,5 +66,10 @@ export function decide({ prompt, jev, current, available, contextTokens = 0 }) {
     return settle(current, "downgrade-not-worth-cache-rebuild");
   }
 
-  return settle(target, "jev");
+  // Climb one tier at a time unless Jev is sure; a doubtful jump to the top is the costly mistake.
+  if (jev.confidence < THRESHOLDS.stepUpConfidence && rankOf(target) > rankOf(current) + 1) {
+    return settle(TIER_NAMES[rankOf(current) + 1], "gradual-step");
+  }
+
+  return settle(target, reason);
 }
