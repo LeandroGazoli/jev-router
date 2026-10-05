@@ -1,7 +1,8 @@
-import { readFileSync, writeFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AUTO_MODEL } from "./config.mjs";
+import { atomicWriteFile } from "./private-fs.mjs";
 
 export const USER_SETTINGS = join(homedir(), ".claude", "settings.json");
 
@@ -30,7 +31,9 @@ export function restoreSavedModel(previous, file = USER_SETTINGS) {
     if (settings.model !== AUTO_MODEL) return false;
     if (previous === undefined) delete settings.model;
     else settings.model = previous;
-    writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
+    // Write-temp-then-rename: a process killed mid-write must never leave the user's real
+    // settings file half-written, and the existing file's mode is preserved rather than reset.
+    atomicWriteFile(file, `${JSON.stringify(settings, null, 2)}\n`);
     return true;
   } catch {
     return false;

@@ -1,16 +1,10 @@
-import { chmodSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import { privateDirPath, writePrivateFile } from "./private-fs.mjs";
 
 // One file per session rather than a shared map, so concurrent jev-claude sessions can never
 // clobber each other's status. Kept in the temp dir so the OS eventually cleans up.
-const DIR = join(tmpdir(), "jev-claude");
-
-// Status files hold prompt text and exact Jev exchanges, so only the owner may read them.
-// On Linux the temp dir is the shared /tmp; macOS and Windows temp dirs are already per-user,
-// where these modes are harmless (Windows ignores them).
-const DIR_MODE = 0o700;
-const FILE_MODE = 0o600;
+const DIR = privateDirPath("jev-claude");
 
 // Files not updated for this long belong to finished sessions and are removed.
 export const STALE_AFTER_MS = 7 * 24 * 60 * 60 * 1000;
@@ -22,11 +16,7 @@ const fileFor = (sessionId) => join(DIR, `${sessionId.replace(/[^\w-]/g, "")}.js
 export function writeStatus(sessionId, status) {
   if (!sessionId) return;
   try {
-    ensureDir();
-    const file = fileFor(sessionId);
-    writeFileSync(file, JSON.stringify(status), { mode: FILE_MODE });
-    // `mode` only applies on creation; tighten files written by earlier versions too.
-    chmodSync(file, FILE_MODE);
+    writePrivateFile(DIR, `${sessionId.replace(/[^\w-]/g, "")}.json`, JSON.stringify(status));
     if (!pruned) {
       pruned = true;
       pruneStale();
@@ -50,13 +40,6 @@ export function readStatus(sessionId) {
   } catch {
     return null;
   }
-}
-
-function ensureDir() {
-  mkdirSync(DIR, { recursive: true, mode: DIR_MODE });
-  // Directories created by earlier versions were world-readable. chmod fails if another user
-  // owns the directory, in which case the write below fails too and status is skipped.
-  chmodSync(DIR, DIR_MODE);
 }
 
 /** Delete status files untouched for `maxAgeMs`. Runs once per process on the first write. */
