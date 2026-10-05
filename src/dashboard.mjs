@@ -8,6 +8,9 @@ import { listStatuses, readLedger } from "./status.mjs";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAGE = readFileSync(join(HERE, "dashboard.html"), "utf8");
 
+// Lets a second launcher tell "our dashboard is already on this port" from any other local server.
+export const IDENTITY_HEADER = "x-jev-dashboard";
+
 export const randomToken = () => randomBytes(18).toString("base64url");
 
 /** Bearer header first, falling back to the ?token= query string the page itself is opened with. */
@@ -41,7 +44,7 @@ function aggregate(entries) {
 }
 
 const json = (res, status, body) => {
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, { "content-type": "application/json", [IDENTITY_HEADER]: "1" });
   res.end(JSON.stringify(body));
 };
 
@@ -60,7 +63,7 @@ export async function startDashboard({ port = 0, token = randomToken(), statusDi
     if (req.method !== "GET") return json(res, 404, { error: "not found" });
 
     if (url.pathname === "/") {
-      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8", [IDENTITY_HEADER]: "1" });
       return res.end(PAGE);
     }
 
@@ -78,7 +81,15 @@ export async function startDashboard({ port = 0, token = randomToken(), statusDi
     return json(res, 404, { error: "not found" });
   });
 
-  await new Promise((resolve) => server.listen(port, "127.0.0.1", resolve));
+  // Reject on a listen failure (typically EADDRINUSE) so callers can tell "already running"
+  // from a real fault, instead of an unhandled 'error' event taking the process down.
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", reject);
+      resolve();
+    });
+  });
   return {
     port: server.address().port,
     token,

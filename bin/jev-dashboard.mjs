@@ -1,22 +1,54 @@
 #!/usr/bin/env node
-import { randomToken, startDashboard } from "../src/dashboard.mjs";
+import { launchDashboard } from "../src/dashboard-launch.mjs";
 
-function parsePort(argv) {
-  const i = argv.indexOf("--port");
-  if (i !== -1 && argv[i + 1] !== undefined) return Number(argv[i + 1]);
-  return Number(process.env.JEV_DASHBOARD_PORT ?? 8787);
+const argv = process.argv.slice(2);
+
+function portFrom(args) {
+  const i = args.indexOf("--port");
+  if (i !== -1 && args[i + 1] !== undefined) return Number(args[i + 1]);
+  return undefined; // launchDashboard falls back to JEV_DASHBOARD_PORT, then 8787
 }
 
-const token = randomToken();
-const { port, close } = await startDashboard({ port: parsePort(process.argv.slice(2)), token });
-const url = `http://127.0.0.1:${port}/?token=${token}`;
+if (argv.includes("--help") || argv.includes("-h")) {
+  process.stdout.write(
+    [
+      "Usage: jev-dashboard [--port <n>] [--open] [--new-token]",
+      "",
+      "  --port <n>    port to listen on (default: JEV_DASHBOARD_PORT or 8787)",
+      "  --open        open the dashboard in your default browser (or JEV_DASHBOARD_OPEN=1)",
+      "  --new-token   replace the saved access token; previously shared links stop working",
+      "",
+    ].join("\n"),
+  );
+  process.exit(0);
+}
 
-process.stdout.write(`[jev] dashboard: ${url}\n`);
-process.stdout.write("[jev] read-only -- opening this URL never calls the router itself.\n");
-
-for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
-  process.on(signal, () => {
-    close();
-    process.exit(0);
+let launched;
+try {
+  launched = await launchDashboard({
+    port: portFrom(argv),
+    open: argv.includes("--open") || process.env.JEV_DASHBOARD_OPEN === "1",
+    rotate: argv.includes("--new-token"),
   });
+} catch (err) {
+  process.stderr.write(`[jev] dashboard: ${err.message}\n`);
+  // exitCode rather than process.exit(): exiting while the probe's fetch handle is still closing
+  // trips a libuv assertion on Windows and turns exit code 1 into 127.
+  process.exitCode = 1;
+}
+
+if (launched) {
+  const { url, close, alreadyRunning } = launched;
+  process.stdout.write(`[jev] dashboard: ${url}\n`);
+  if (alreadyRunning) {
+    process.stdout.write("[jev] a dashboard is already running on this port; reusing it.\n");
+  } else {
+    process.stdout.write("[jev] read-only -- opening this URL never calls the router itself.\n");
+    for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
+      process.on(signal, () => {
+        close();
+        process.exit(0);
+      });
+    }
+  }
 }
