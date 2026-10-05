@@ -20,6 +20,20 @@ export function readSavedModel(file = USER_SETTINGS) {
 }
 
 /**
+ * Whether the settings file currently holds the routing sentinel as the saved default. True
+ * both while a session is legitimately mid-run (it will clear this on its own exit) and after
+ * one was killed hard enough to skip that -- callers that can tell the two apart (see
+ * src/lock.mjs) use this to decide whether a stuck sentinel is safe to heal.
+ */
+export function hasStuckSentinel(file = USER_SETTINGS) {
+  try {
+    return JSON.parse(readFileSync(file, "utf8")).model === AUTO_MODEL;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Puts `previous` back if the settings file now holds the sentinel. Selecting a row with
  * Enter makes Claude Code save it as the default for new sessions, and a saved "jev-router"
  * would break plain `claude`, which has no proxy to resolve it. Anything other than an exact
