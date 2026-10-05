@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import net from "node:net";
 import {
   sanitizeSchema,
   newTurnPrompt,
@@ -179,6 +180,56 @@ test("a routed request without metadata is recorded under the conversation key",
   assert.ok(status, "the decision is filed under the conversation key instead of being dropped");
   assert.equal(status.tier, "sonnet");
   assert.equal(status.confidence, 0.77);
+});
+
+test("close() drops an already-open connection instead of waiting for it", async () => {
+  const { port, close } = await startProxy();
+  const socket = net.connect(port, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  const closedQuickly = new Promise((resolve, reject) => {
+    socket.once("close", resolve);
+    setTimeout(() => reject(new Error("connection was still open 500ms after close()")), 500);
+  });
+  close();
+  await closedQuickly;
+});
+
+test("a brand-new conversation can start below the opus default even with a huge opening message", async (t) => {
+  const upstream = http.createServer((req, res) => {
+    req.on("data", () => {});
+    req.on("end", () => {
+      res.setHeader("content-type", "application/json");
+      res.end('{"id":"msg_1","type":"message","model":"claude-haiku-4-5-20251001"}');
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => upstream.close());
+
+  const { port, close } = await startProxy({
+    upstreamURL: `http://127.0.0.1:${upstream.address().port}`,
+    route: async () => ({ choice: "claude-haiku-4-5-20251001", confidence: 0.95, ms: 1 }),
+  });
+  t.after(close);
+
+  // CLAUDE.md plus SessionStart hook output can make the opening message of a session huge
+  // even though no tier has been fixed for this conversation yet; that must not be read as "a
+  // large conversation that would waste cache work to downgrade".
+  const body = {
+    model: "jev-router",
+    tools: [{ name: "Bash" }],
+    messages: [{ role: "user", content: `rename this variable ${"x".repeat(200000)}` }],
+  };
+  await fetch(`http://127.0.0.1:${port}/v1/messages`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  const status = readStatus(conversationKey(body));
+  assert.equal(status.tier, "haiku", "the first turn is free to route anywhere, including down");
 });
 
 const withTools = (messages) => ({ tools: [{ name: "Bash" }], messages });

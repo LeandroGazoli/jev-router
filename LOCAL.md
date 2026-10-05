@@ -22,6 +22,7 @@ builders, longer timeouts), the launchers (no `JEV_API_KEY` gate), and one test 
 | `JEV_MAX_PROMPT_CHARS` | `1500` | Prompt text sent to the model (head and tail kept) |
 | `JEV_DISABLE` | unset | `1` starts the CLI without routing |
 | `JEV_DASHBOARD_PORT` | `8787` | Port for `jev-dashboard` (read-only web view of sessions and the routing ledger) |
+| `JEV_DOWNGRADE_CUTOFF_TOKENS` | `20000` | Conversation size above which an automatic downgrade is refused (prompt-cache rebuild not worth it) |
 
 ## Notes
 

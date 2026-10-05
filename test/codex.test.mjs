@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
+import net from "node:net";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,15 +110,33 @@ test("maps tiers and clamps unsupported reasoning effort", () => {
   assert.equal(body.reasoning.effort, "medium");
 });
 
-test("sends exact available GPT models to Jev", () => {
+test("sends one candidate per tier to Jev, enriched with catalog metadata when present", () => {
   const models = new Map([
     ["gpt-5.6-terra", { slug: "gpt-5.6-terra", display_name: "GPT-5.6-Terra" }],
     ["gpt-5.6-sol", { slug: "gpt-5.6-sol", display_name: "GPT-5.6-Sol" }],
   ]);
   assert.deepEqual(codexModels(models).map(({ id, tier }) => ({ id, tier })), [
+    { id: "gpt-5.6-luna", tier: "haiku" },
     { id: "gpt-5.6-terra", tier: "sonnet" },
     { id: "gpt-5.6-sol", tier: "opus" },
+    { id: "gpt-6-astra", tier: "fable" },
   ]);
+  const sonnet = codexModels(models).find((model) => model.tier === "sonnet");
+  assert.equal(sonnet.description, "GPT-5.6-Terra");
+  const haiku = codexModels(models).find((model) => model.tier === "haiku");
+  assert.equal(haiku.description, "gpt-5.6-luna", "falls back to the bare id when not in the catalog");
+});
+
+test("a model configured via JEV_CODEX_*_MODEL is a candidate even if absent from the account catalog", (t) => {
+  t.before(() => { process.env.JEV_CODEX_STRONG_MODEL = "gpt-5.6-custom"; });
+  t.after(() => { delete process.env.JEV_CODEX_STRONG_MODEL; });
+  // The account catalog only lists the stock models; the configured one has not propagated.
+  const models = new Map([["gpt-5.6-sol", { slug: "gpt-5.6-sol", display_name: "GPT-5.6-Sol" }]]);
+  const candidates = codexModels(models);
+  assert.ok(
+    candidates.some((model) => model.id === "gpt-5.6-custom" && model.tier === "opus"),
+    "the configured opus model must be visible to Jev even though the catalog does not list it",
+  );
 });
 
 test("surfaces routing as a native commentary event", () => {
@@ -184,7 +203,12 @@ test("proxy preserves Codex auth, picker, routing, and native decision output", 
     apiBaseURL: `${upstreamURL}/v1`,
     route: async ({ models }) => {
       routeCalls++;
-      assert.deepEqual(models.map((model) => model.id), ["gpt-5.6-terra", "gpt-5.6-sol"]);
+      // One candidate per non-fable tier is always offered, using the catalog's description
+      // when it has a matching entry (haiku here falls back to the bare default id).
+      assert.deepEqual(
+        models.map((model) => model.id),
+        ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"],
+      );
       return {
         choice: "gpt-5.6-sol",
         confidence: 0.91,
@@ -262,4 +286,69 @@ test("proxy preserves Codex auth, picker, routing, and native decision output", 
   assert.equal(routeCalls, 1);
   assert.equal(seen[3].body.model, "gpt-5.6-sol");
   assert.equal(readStatus(statusId).metrics.reasoningRequired, 0.91);
+});
+
+test("Codex proxy close() drops an already-open connection instead of waiting for it", async () => {
+  const { port, close } = await startCodexProxy();
+  const socket = net.connect(port, "127.0.0.1");
+  await new Promise((resolve, reject) => {
+    socket.once("connect", resolve);
+    socket.once("error", reject);
+  });
+  const closedQuickly = new Promise((resolve, reject) => {
+    socket.once("close", resolve);
+    setTimeout(() => reject(new Error("connection was still open 500ms after close()")), 500);
+  });
+  close();
+  await closedQuickly;
+});
+
+test("preserves a multi-byte character split across two response chunks", async (t) => {
+  // Build the SSE body as raw bytes, then cut it mid-character: the two UTF-8 bytes of 'é'
+  // (0xC3 0xA9) land in separate HTTP chunks. A naive chunk.toString() per chunk decodes each
+  // half independently and turns the split bytes into replacement characters.
+  const prefix = Buffer.from('event: response.created\ndata: {"message":"h');
+  const rest = Buffer.from(
+    'éllo 😀"}\n\n' + 'event: response.completed\ndata: {"type":"response.completed"}\n\n',
+  );
+  const full = Buffer.concat([prefix, rest]);
+  const splitAt = prefix.length + 1; // after 0xC3, before 0xA9
+
+  const upstream = http.createServer((req, res) => {
+    req.on("data", () => {});
+    req.on("end", () => {
+      if (req.url.startsWith("/backend-api/codex/models")) {
+        res.setHeader("content-type", "application/json");
+        return res.end(JSON.stringify({ models: [{ slug: "gpt-5.6-sol", supported_in_api: true, visibility: "list" }] }));
+      }
+      res.write(full.subarray(0, splitAt));
+      setTimeout(() => res.end(full.subarray(splitAt)), 10);
+    });
+  });
+  await new Promise((resolve) => upstream.listen(0, "127.0.0.1", resolve));
+  t.after(() => upstream.close());
+  const upstreamURL = `http://127.0.0.1:${upstream.address().port}`;
+
+  const { port, close } = await startCodexProxy({
+    chatgptBaseURL: `${upstreamURL}/backend-api/codex`,
+    apiBaseURL: `${upstreamURL}/v1`,
+    route: async () => ({ choice: "gpt-5.6-sol", confidence: 0.9, response: { answers: {} } }),
+    statusId: `codex-utf8-${process.pid}`,
+  });
+  t.after(close);
+
+  const response = await fetch(`http://127.0.0.1:${port}/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      model: "jev-router",
+      input: [
+        { type: "additional_tools", role: "developer", tools: [{}] },
+        { role: "user", content: [{ type: "input_text", text: "say héllo 😀" }] },
+      ],
+    }),
+  }).then((r) => r.text());
+
+  assert.ok(!response.includes("�"), `response was corrupted: ${response}`);
+  assert.match(response, /héllo 😀/);
 });

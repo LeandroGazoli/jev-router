@@ -35,27 +35,25 @@ export function codexTierOf(model) {
   return /^gpt-/i.test(model ?? "") ? "sonnet" : null;
 }
 
-/** Exact GPT models in Codex's account catalog; configured ids are the cold-start fallback. */
+/**
+ * One Jev candidate per tier, built from the configured (or default) model id for that tier --
+ * never from the account catalog alone. A model configured via JEV_CODEX_*_MODEL that has not
+ * propagated to the account's catalog yet (or belongs to a different account) must still be a
+ * candidate Jev can choose; filtering candidates down to whatever the catalog happens to list
+ * silently made such a configured model invisible to the router. The catalog is only consulted
+ * here for a nicer description when it does have a matching entry.
+ */
 export function codexModels(models = new Map()) {
-  const available = [...models.values()]
-    .filter((model) => model.slug !== CODEX_AUTO_MODEL && model.supported_in_api !== false)
-    .map((model) => ({
-      id: model.slug,
-      tier: codexTierOf(model.slug),
-      description: [
-        model.display_name,
-        model.description,
-        model.context_window && `${model.context_window} context tokens`,
-      ].filter(Boolean).join("; "),
-    }))
-    .filter((model) => model.tier);
-  return available.length
-    ? available
-    : Object.keys(DEFAULT_MODELS).map((tier) => ({
-        id: codexModelOf(tier),
-        tier,
-        description: codexModelOf(tier),
-      }));
+  return Object.keys(DEFAULT_MODELS).map((tier) => {
+    const id = codexModelOf(tier);
+    const info = models.get(id);
+    const description = info
+      ? [info.display_name, info.description, info.context_window && `${info.context_window} context tokens`]
+          .filter(Boolean)
+          .join("; ") || id
+      : id;
+    return { id, tier, description };
+  });
 }
 
 const modelForTier = (models, tier) =>
@@ -191,6 +189,10 @@ export async function startCodexProxy({
               availableTiers().includes(model.tier),
             );
             const available = [...new Set(candidates.map((model) => model.tier))];
+            // Same first-turn guard as the Claude proxy: no tier has been fixed for this
+            // conversation yet, so the opening message's size must not trip the downgrade
+            // guard below and pin every new conversation to the "opus" default.
+            const noTierYet = !states.has(key);
             const currentModel = states.get(key)?.model ?? modelForTier(candidates, "opus");
             const current = codexTierOf(currentModel) ?? "opus";
             const prompt = codexNewTurnPrompt(body);
@@ -206,7 +208,7 @@ export async function startCodexProxy({
                 jev: jev && { ...jev, choice: chosen?.tier },
                 current,
                 available,
-                contextTokens,
+                contextTokens: noTierYet ? 0 : contextTokens,
               });
               tier = decision.tier;
               model =
@@ -295,11 +297,17 @@ export async function startCodexProxy({
             response.pipe(res);
             return;
           }
+          // Decode with the stream's own stateful UTF-8 decoder rather than chunk.toString()
+          // per chunk: a multi-byte character (accents, Arabic, emoji) can land split across
+          // two HTTP chunks, and decoding each chunk in isolation turns the split bytes into
+          // replacement characters. setEncoding keeps any trailing incomplete sequence buffered
+          // until the next chunk completes it.
+          response.setEncoding("utf8");
           let pending = "";
           let inspected = false;
           response.on("data", (chunk) => {
             if (inspected) return void res.write(chunk);
-            pending += chunk.toString();
+            pending += chunk;
             const end = pending.indexOf("\n\n");
             if (end < 0) return;
             const first = pending.slice(0, end + 2);
@@ -331,5 +339,13 @@ export async function startCodexProxy({
   });
 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
-  return { port: server.address().port, close: () => server.close() };
+  // server.close() alone waits for in-flight keep-alive connections to end on their own; a
+  // connection still open when the Codex CLI exits would otherwise leave this process hanging.
+  return {
+    port: server.address().port,
+    close: () => {
+      server.close();
+      server.closeAllConnections();
+    },
+  };
 }
