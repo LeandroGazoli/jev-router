@@ -3,9 +3,15 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendRouting, listStatuses, readLedger, rotateLedgerIfLarge } from "../src/status.mjs";
+import { STATUS_DIR, appendRouting, listStatuses, readLedger, rotateLedgerIfLarge } from "../src/status.mjs";
 
 const scratch = () => mkdtempSync(join(tmpdir(), "jev-status-"));
+
+test("the suite runs against an isolated status directory, never the real one", () => {
+  // npm test preloads test/helpers/isolate-status-dir.mjs; without it every proxy test would
+  // write fake sessions and routing decisions into the directory the dashboard reads.
+  assert.match(STATUS_DIR, /jev-test-status-/);
+});
 
 test("appendRouting/readLedger round-trip, oldest first, without any prompt field", () => {
   const dir = scratch();
