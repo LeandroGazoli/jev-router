@@ -5,6 +5,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CODEX_AUTO_MODEL, startCodexProxy } from "./codex-proxy.mjs";
+import { launchDashboard } from "./dashboard-launch.mjs";
 
 const PROVIDER = "jev";
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -97,6 +98,22 @@ export async function runCodex() {
   if (routingEnabled()) {
     const proxy = await startCodexProxy({ statusId });
     close = proxy.close;
+    // Opt-in (JEV_DASHBOARD=1), same as jev-claude; reuses an instance already on the port.
+    if (process.env.JEV_DASHBOARD === "1") {
+      try {
+        const dashboard = await launchDashboard({ open: process.env.JEV_DASHBOARD_OPEN === "1" });
+        const closeProxy = proxy.close;
+        close = () => {
+          closeProxy();
+          dashboard.close();
+        };
+        process.stderr.write(`[jev] dashboard: ${dashboard.url}
+`);
+      } catch (err) {
+        process.stderr.write(`[jev] dashboard unavailable: ${err.message}
+`);
+      }
+    }
     args = codexArgs(`http://127.0.0.1:${proxy.port}`, args);
   } else {
     process.stderr.write(

@@ -10,6 +10,7 @@ import { AUTO_MODEL } from "../src/config.mjs";
 import { hasStuckSentinel, readSavedModel, restoreSavedModel } from "../src/settings.mjs";
 import { STATUS_DIR } from "../src/status.mjs";
 import { acquireLock, isLockStale, releaseLock } from "../src/lock.mjs";
+import { launchDashboard } from "../src/dashboard-launch.mjs";
 import { writePrivateFile } from "../src/private-fs.mjs";
 import { LOG_FILE } from "../src/log.mjs";
 
@@ -154,6 +155,20 @@ if (routingEnabled()) {
   // So a future session can tell this one apart from a merely-stuck sentinel: see the heal
   // check above and src/lock.mjs.
   acquireLock(STATUS_DIR);
+  // Opt-in (JEV_DASHBOARD=1): serve the read-only dashboard for the lifetime of this session.
+  // An instance already running on the port is reused rather than treated as an error.
+  let closeDashboard = () => {};
+  if (process.env.JEV_DASHBOARD === "1") {
+    try {
+      const dashboard = await launchDashboard({ open: process.env.JEV_DASHBOARD_OPEN === "1" });
+      closeDashboard = dashboard.close;
+      process.stderr.write(`[jev] dashboard: ${dashboard.url}
+`);
+    } catch (err) {
+      process.stderr.write(`[jev] dashboard unavailable: ${err.message}
+`);
+    }
+  }
   // Guards against running twice: `exit` always fires on the way out, but a signal handler
   // that calls process.exit() triggers `exit` too, and close()-ing an already-closed server
   // throws. restoreSavedModel() is itself idempotent (it no-ops once the sentinel is gone).
@@ -162,6 +177,7 @@ if (routingEnabled()) {
     if (cleaned) return;
     cleaned = true;
     close();
+    closeDashboard();
     restoreSavedModel(savedModelBefore);
     releaseLock(STATUS_DIR);
   };

@@ -234,8 +234,20 @@ Opens a small, read-only web page showing active sessions (tier, confidence, pro
 aggregate decision counts from the durable routing ledger. It never calls Jev or the router
 itself -- it only reads the same status files the status line and `/jev-explain` already use,
 so viewing it costs nothing extra. The token in the URL is required on every request (the
-status files carry prompt text); keep that link private. Configure the port with
-`JEV_DASHBOARD_PORT` or `--port`; default `8787`.
+status files carry prompt text); keep that link private.
+
+- **Stable link:** the token is saved (mode 0600) in the same private directory as the status
+  files, so the link is the same on every start and can be bookmarked. `jev-dashboard --new-token`
+  replaces it and invalidates old links.
+- **Open the browser:** `jev-dashboard --open` (or `JEV_DASHBOARD_OPEN=1`).
+- **Port:** `--port` or `JEV_DASHBOARD_PORT`; default `8787`. If a dashboard is already running
+  there, a second launch just prints its link.
+- **Start with the CLI (opt-in):** set `JEV_DASHBOARD=1` and `jev-claude` / `jev-codex` serve it
+  for the lifetime of the session and print the link (add `JEV_DASHBOARD_OPEN=1` to open it). It is
+  off by default so no port is opened unless you ask. A dashboard that was already running is
+  reused and left running when the session ends.
+- It is only available while one of those processes is running; the recorded history
+  (`routing.jsonl`) is kept regardless.
 
 ## Compatibility notes
 
