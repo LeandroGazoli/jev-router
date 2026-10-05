@@ -31,6 +31,16 @@ builders, longer timeouts), the launchers (no `JEV_API_KEY` gate), and one test 
   prompt text or the exact Jev exchange that the status files carry -- it is meant to live
   longer (across sessions and restarts), so it carries less.
 
+- `jev-claude.lock` (same directory) names the pid of the currently running `jev-claude`
+  session. A hard kill (`taskkill /F`, Task Manager "End Task", power loss) cannot be
+  intercepted by any process on any platform, so a session killed that way skips restoring
+  `~/.claude/settings.json` and can leave the routing sentinel stuck there, breaking plain
+  `claude`. The *next* `jev-claude` checks whether the lock's pid is still running; if it
+  is not, it clears the stuck sentinel before doing anything else. SIGTERM/SIGHUP are still
+  handled for a graceful stop request (a real signal on POSIX; closing the console window maps
+  to SIGHUP on Windows) -- neither of those help against a hard kill, which this heal check is
+  what actually recovers from.
+
 - One decision = 4 parallel questions (tier choice + 3 complexity scores). Measured about 1.4 s
   warm and about 15 s on the very first call after the server loads.
 - llama-server splits `-c` across its slots: `-c 4096` with 4 slots leaves 1024 tokens per request.

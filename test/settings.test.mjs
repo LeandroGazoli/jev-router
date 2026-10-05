@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { readSavedModel, restoreSavedModel } from "../src/settings.mjs";
+import { hasStuckSentinel, readSavedModel, restoreSavedModel } from "../src/settings.mjs";
 
 const fileWith = (settings) => {
   const file = join(mkdtempSync(join(tmpdir(), "jev-settings-")), "settings.json");
@@ -40,4 +40,11 @@ test("leaves a real model the user chose during the session alone", () => {
 
 test("a missing or unreadable settings file is not an error", () => {
   assert.equal(restoreSavedModel("opus", join(tmpdir(), "nope", "settings.json")), false);
+});
+
+test("hasStuckSentinel reports the sentinel regardless of whether it is actually stuck", () => {
+  assert.equal(hasStuckSentinel(fileWith({ model: "jev-router" })), true);
+  assert.equal(hasStuckSentinel(fileWith({ model: "opus" })), false);
+  assert.equal(hasStuckSentinel(fileWith({})), false);
+  assert.equal(hasStuckSentinel(join(tmpdir(), "does-not-exist.json")), false);
 });

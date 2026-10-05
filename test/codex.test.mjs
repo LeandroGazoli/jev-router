@@ -128,8 +128,12 @@ test("sends one candidate per tier to Jev, enriched with catalog metadata when p
 });
 
 test("a model configured via JEV_CODEX_*_MODEL is a candidate even if absent from the account catalog", (t) => {
-  t.before(() => { process.env.JEV_CODEX_STRONG_MODEL = "gpt-5.6-custom"; });
-  t.after(() => { delete process.env.JEV_CODEX_STRONG_MODEL; });
+  const previous = process.env.JEV_CODEX_STRONG_MODEL;
+  process.env.JEV_CODEX_STRONG_MODEL = "gpt-5.6-custom";
+  t.after(() => {
+    if (previous === undefined) delete process.env.JEV_CODEX_STRONG_MODEL;
+    else process.env.JEV_CODEX_STRONG_MODEL = previous;
+  });
   // The account catalog only lists the stock models; the configured one has not propagated.
   const models = new Map([["gpt-5.6-sol", { slug: "gpt-5.6-sol", display_name: "GPT-5.6-Sol" }]]);
   const candidates = codexModels(models);

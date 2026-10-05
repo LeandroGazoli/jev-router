@@ -7,8 +7,9 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startProxy } from "../src/proxy.mjs";
 import { AUTO_MODEL } from "../src/config.mjs";
-import { readSavedModel, restoreSavedModel } from "../src/settings.mjs";
+import { hasStuckSentinel, readSavedModel, restoreSavedModel } from "../src/settings.mjs";
 import { STATUS_DIR } from "../src/status.mjs";
+import { acquireLock, isLockStale, releaseLock } from "../src/lock.mjs";
 import { writePrivateFile } from "../src/private-fs.mjs";
 import { LOG_FILE } from "../src/log.mjs";
 
@@ -37,6 +38,21 @@ function autoModelEnv() {
   // default costs the user nothing permanent. A model they set themselves still wins.
   if (!process.env.ANTHROPIC_MODEL) env.ANTHROPIC_MODEL = AUTO_MODEL;
   return env;
+}
+
+/**
+ * A hard kill (taskkill /F, Task Manager "End Task", SIGKILL, power loss) cannot be intercepted
+ * by any process on any platform -- that is what "hard" means, and no signal handler changes it.
+ * A session killed that way skips its own cleanup entirely and can leave the sentinel stuck as
+ * the user's saved default, breaking plain `claude` (it has no proxy to resolve "jev-router")
+ * until something notices. The lock below is stale exactly when that happened -- its pid is no
+ * longer running -- which is what makes it safe to heal here, before anything else.
+ */
+if (hasStuckSentinel() && isLockStale(STATUS_DIR)) {
+  restoreSavedModel(undefined);
+  process.stderr.write(
+    "[jev] cleared a routing sentinel a previous session left stuck (it was killed before it could restore your model)\n",
+  );
 }
 
 /**
@@ -135,6 +151,9 @@ if (routingEnabled()) {
   env.ANTHROPIC_BASE_URL = `http://127.0.0.1:${port}`;
   env.CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY = "1";
   Object.assign(env, autoModelEnv());
+  // So a future session can tell this one apart from a merely-stuck sentinel: see the heal
+  // check above and src/lock.mjs.
+  acquireLock(STATUS_DIR);
   // Guards against running twice: `exit` always fires on the way out, but a signal handler
   // that calls process.exit() triggers `exit` too, and close()-ing an already-closed server
   // throws. restoreSavedModel() is itself idempotent (it no-ops once the sentinel is gone).
@@ -144,11 +163,16 @@ if (routingEnabled()) {
     cleaned = true;
     close();
     restoreSavedModel(savedModelBefore);
+    releaseLock(STATUS_DIR);
   };
   process.on("exit", cleanup);
   // With no listener, Node terminates immediately on SIGTERM/SIGHUP without ever emitting
-  // `exit` -- `kill`ing this process (or a supervisor stopping it) would leave the "jev-router"
-  // sentinel stuck in the user's real settings.json, breaking plain `claude` afterwards.
+  // `exit` -- a supervisor asking this process to stop gracefully (POSIX SIGTERM, or closing
+  // the console window, which libuv maps to SIGHUP on Windows) would otherwise leave the
+  // "jev-router" sentinel stuck in the user's real settings.json, breaking plain `claude`
+  // afterwards. This does NOT help against a hard kill (taskkill /F, Task Manager "End Task",
+  // SIGKILL, power loss) on any platform -- nothing can intercept that, which is what "hard"
+  // means; the startup heal check above is what recovers from that case, on the next run.
   // Ctrl+C (SIGINT) is left alone on purpose: Node already emits `exit` for it.
   for (const signal of ["SIGTERM", "SIGHUP"]) {
     process.on(signal, () => {
