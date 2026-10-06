@@ -6,7 +6,8 @@ import { availableTiers, shouldUseExactModel } from "./config.mjs";
 import { askJev } from "./router.mjs";
 import { decide } from "./policy.mjs";
 import { log } from "./log.mjs";
-import { appendRouting, appendUsage, writeDecision, writeStatus } from "./status.mjs";
+import { appendRouting, appendSignal, appendUsage, writeDecision, writeStatus } from "./status.mjs";
+import { syntheticKind } from "./synthetic.mjs";
 import { tapResponse } from "./usage.mjs";
 
 const CHATGPT_BASE_URL = "https://chatgpt.com/backend-api/codex";
@@ -220,7 +221,7 @@ export async function startCodexProxy({
                   : tier === current
                     ? currentModel
                     : modelForTier(candidates, tier);
-              states.set(key, { tier, model });
+              states.set(key, { tier, model, decidedAt: Date.now() });
               routing = {
                 prompt,
                 tier,
@@ -243,6 +244,7 @@ export async function startCodexProxy({
                 confidence: routing.confidence,
                 reason: routing.reason,
                 metrics: routing.metrics,
+                ...(syntheticKind(prompt) && { synthetic: syntheticKind(prompt) }),
               });
               debug(`${key} ${current} -> ${tier} (${decision.reason}) | ${prompt.slice(0, 60)}`);
             }
@@ -250,7 +252,25 @@ export async function startCodexProxy({
           } else {
             const prompt = codexNewTurnPrompt(body);
             const explaining = prompt?.includes("<jev-explain>") || /^\$jev-explain\b/i.test(prompt ?? "");
-            if (prompt && !explaining) writeStatus(statusId, { manual: true, at: Date.now() });
+            if (prompt && !explaining) {
+              writeStatus(statusId, { manual: true, at: Date.now() });
+              // Same signal as the Claude proxy: a tier the router chose, then a model picked by hand.
+              const prior = states.get(codexConversationKey(body));
+              const to = codexTierOf(body.model);
+              if (prior?.tier && !prior.switched && to && to !== prior.tier) {
+                prior.switched = true;
+                const at = Date.now();
+                appendSignal({
+                  at,
+                  cli: "codex",
+                  kind: "manual-switch",
+                  key: codexConversationKey(body),
+                  from: prior.tier,
+                  to,
+                  afterMs: prior.decidedAt ? at - prior.decidedAt : null,
+                });
+              }
+            }
           }
           out = Buffer.from(JSON.stringify(body));
           // `body.model` is the model that goes upstream, whether routed or chosen by the user.

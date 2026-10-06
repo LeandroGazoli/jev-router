@@ -15,7 +15,8 @@ import {
 import { askJev } from "./router.mjs";
 import { decide } from "./policy.mjs";
 import { log } from "./log.mjs";
-import { appendRouting, appendUsage, writeDecision, writeStatus } from "./status.mjs";
+import { appendRouting, appendSignal, appendUsage, writeDecision, writeStatus } from "./status.mjs";
+import { syntheticKind } from "./synthetic.mjs";
 import { tapResponse } from "./usage.mjs";
 
 const ANTHROPIC_BASE_URL = "https://api.anthropic.com";
@@ -253,9 +254,29 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
             if (Array.isArray(body.tools)) {
               writeStatus(sessionOf(body), { manual: true, at: Date.now() });
             }
+            // The router had chosen a tier for this conversation and the person now runs another:
+            // the only sign in the data that a decision was not what they wanted. Logged once per
+            // stretch of manual control, and only for real agent turns (sub-agents have their own
+            // conversation key, so they never match a routed one).
+            const prior = Array.isArray(body.tools) && body.tools.length ? convos.get(conversationKey(body)) : null;
+            const to = tierOf(body.model);
+            if (prior?.tier && !prior.switched && to && to !== prior.tier) {
+              prior.switched = true;
+              const at = Date.now();
+              appendSignal({
+                at,
+                cli: "claude",
+                kind: "manual-switch",
+                key: conversationKey(body),
+                from: prior.tier,
+                to,
+                afterMs: prior.decidedAt ? at - prior.decidedAt : null,
+              });
+            }
           } else {
             const key = conversationKey(body);
             const state = stateFor(key);
+            state.switched = false;
             // What the prompt cache was built on, which is what a downgrade would discard.
             const current = state.tier ?? "opus";
             // No tier has been fixed for this conversation yet, so there is no cache built on
@@ -293,6 +314,7 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
                     : modelForTier(models, tier);
               state.tier = tier;
               state.model = model;
+              state.decidedAt = Date.now();
               fresh = {
                 prompt,
                 model,
@@ -337,6 +359,7 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
                 confidence: fresh.confidence,
                 reason: fresh.reason,
                 metrics: fresh.metrics,
+                ...(syntheticKind(fresh.prompt) && { synthetic: syntheticKind(fresh.prompt) }),
               });
             }
           }

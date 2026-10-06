@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { THRESHOLDS } from "./config.mjs";
 import { EXPORT_FORMATS, USAGE_EXPORT_FORMATS, exportFilename } from "./export.mjs";
-import { STALE_AFTER_MS, listStatuses, readLedger, readUsage } from "./status.mjs";
+import { STALE_AFTER_MS, listStatuses, readLedger, readSignals, readUsage } from "./status.mjs";
 
 // The product is being renamed: this is the one place the name lives. The page and the
 // sign-in screen both read it, so the rename is a single edit.
@@ -69,7 +69,15 @@ export function aggregate(entries, { minConfidence, stepUpConfidence } = THRESHO
   const outcomes = { accepted: 0, overruled: 0, override: 0, unavailable: 0 };
   let first = null;
   let last = null;
+  let synthetic = 0;
+  let counted = 0;
   for (const entry of entries) {
+    // Turns nobody typed (see synthetic.mjs) are counted apart, not mixed into the calibration.
+    if (entry.synthetic) {
+      synthetic += 1;
+      continue;
+    }
+    counted += 1;
     if (entry.tier) byTier[entry.tier] = (byTier[entry.tier] ?? 0) + 1;
     if (entry.cli) byCli[entry.cli] = (byCli[entry.cli] ?? 0) + 1;
     const confidence = entry.confidence;
@@ -83,7 +91,27 @@ export function aggregate(entries, { minConfidence, stepUpConfidence } = THRESHO
       last = last == null ? entry.at : Math.max(last, entry.at);
     }
   }
-  return { total: entries.length, byTier, byCli, bands, outcomes, first, last };
+  return { total: counted, synthetic, byTier, byCli, bands, outcomes, first, last };
+}
+
+/**
+ * How often the person overrode a decision by switching model themselves, and in which direction.
+ * It is the only evidence of a wrong decision the data has: confidence is the router's own
+ * certainty and says nothing about whether the pick was right.
+ */
+export function aggregateSignals(entries) {
+  const out = { switches: 0, toStronger: 0, toWeaker: 0, within10min: 0, byFrom: {}, byTo: {} };
+  const rank = { haiku: 0, sonnet: 1, opus: 2, fable: 3 };
+  for (const entry of entries) {
+    if (entry.kind !== "manual-switch") continue;
+    out.switches += 1;
+    if (rank[entry.to] > rank[entry.from]) out.toStronger += 1;
+    else if (rank[entry.to] < rank[entry.from]) out.toWeaker += 1;
+    if (Number.isFinite(entry.afterMs) && entry.afterMs <= 10 * 60_000) out.within10min += 1;
+    if (entry.from) out.byFrom[entry.from] = (out.byFrom[entry.from] ?? 0) + 1;
+    if (entry.to) out.byTo[entry.to] = (out.byTo[entry.to] ?? 0) + 1;
+  }
+  return out;
 }
 
 const TOKEN_KINDS = ["input", "cacheRead", "cacheWrite", "output"];
@@ -258,6 +286,7 @@ export async function startDashboard({ port = 0, token = randomToken(), statusDi
         thresholds: { minConfidence: THRESHOLDS.minConfidence, stepUpConfidence: THRESHOLDS.stepUpConfidence },
         stats: aggregate(entries),
         usage: aggregateUsage(readUsage({ since: win.since, dir: statusDir })),
+        signals: aggregateSignals(readSignals({ since: win.since, dir: statusDir })),
       });
     }
 

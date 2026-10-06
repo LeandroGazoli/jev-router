@@ -13,6 +13,7 @@ export const EXPORT_COLUMNS = [
   "toolComplexity",
   "contextSize",
   "conversation",
+  "synthetic",
 ];
 
 const rowOf = (entry) => ({
@@ -27,6 +28,7 @@ const rowOf = (entry) => ({
   toolComplexity: entry.metrics?.toolComplexity ?? "",
   contextSize: entry.metrics?.contextSize ?? "",
   conversation: entry.key ?? "",
+  synthetic: entry.synthetic ?? "",
 });
 
 /**

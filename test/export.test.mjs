@@ -21,7 +21,8 @@ const entry = {
 test("CSV has a header row, ISO times and the metrics flattened", () => {
   const [header, row] = ledgerToCsv([entry]).trim().split("\r\n");
   assert.equal(header, EXPORT_COLUMNS.join(","));
-  assert.equal(row, "2026-10-05T12:00:00.000Z,claude,haiku,claude-haiku-4-5-20251001,0.92,jev,0.1,0.2,0,0.05,abc123");
+  assert.equal(row, "2026-10-05T12:00:00.000Z,claude,haiku,claude-haiku-4-5-20251001,0.92,jev,0.1,0.2,0,0.05,abc123,");
+  assert.ok(ledgerToCsv([{ ...entry, synthetic: "continuation" }]).trim().endsWith(",abc123,continuation"), "automatic turns are labelled");
 });
 
 test("missing fields become empty cells instead of 'undefined'", () => {

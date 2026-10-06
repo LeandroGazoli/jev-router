@@ -189,6 +189,7 @@
         <div><h3>Confidence</h3><div id="rows-confidence"></div></div>
         <div><h3>Outcome</h3><div id="rows-outcome"></div></div>
         <div><h3>CLI</h3><div id="rows-cli"></div></div>
+        <div><h3>Your corrections</h3><div id="rows-signals"></div></div>
       </div>
     </section>
 
@@ -212,6 +213,8 @@
         <dt>Unavailable</dt><dd>The routing model could not be reached, so the current model was kept.</dd>
         <dt>Manual</dt><dd>You picked a model yourself, so routing is paused in that session.</dd>
         <dt>Idle</dt><dd>No request from the session for 15 minutes. A long tool loop keeps a session active even when it makes no new decision.</dd>
+        <dt>Your corrections</dt><dd>How often you switched model yourself after the router had chosen one. Confidence is the router's own certainty; a manual switch is the only thing here that says it was wrong. Few switches over many decisions is weak evidence the thresholds are fine, not proof.</dd>
+        <dt>Automatic turns</dt><dd>Prompts nobody typed: session continuations, messages from other Claude sessions, suggestion and recap requests, and slash commands run with no text. They are still routed but are left out of the calibration counts.</dd>
         <dt>Tokens</dt><dd>What the model API itself reported for each request, in four kinds that do not overlap: fresh input, cache reads, cache writes and output. Cache reads are usually most of a long session and cost a fraction of fresh input, so they are shown separately instead of blended. Only requests that went through the router are counted, from when this version started recording; the routing model's own calls are not included.</dd>
         <dt>Where it comes from</dt><dd>Sessions come from per-session files kept for 7 days. Calibration comes from the decision ledger (<code>routing.jsonl</code>) and Tokens from the usage ledger (<code>usage.jsonl</code>); neither stores prompt text. Confidence bands use this process's <code>JEV_MIN_CONFIDENCE</code> and <code>JEV_STEP_UP_CONFIDENCE</code>.</dd>
       </dl>
@@ -389,12 +392,15 @@
     $(id).replaceChildren(...nodes);
   }
 
-  function renderStats({ stats, thresholds, window: w }) {
+  function renderStats({ stats, thresholds, window: w, signals }) {
     const total = stats.total;
     const label = WINDOW_LABELS[w];
+    const auto = stats.synthetic
+      ? " " + stats.synthetic + (stats.synthetic === 1 ? " automatic turn" : " automatic turns") + " (continuations, messages from other sessions, bare slash commands) left out."
+      : "";
     $("cal-note").textContent = total
-      ? total + (total === 1 ? " decision" : " decisions") + ", " + label + (stats.first != null ? ", " + fmtWhen(stats.first) + " – " + fmtWhen(stats.last) : "") + "."
-      : "No decisions in the " + label + "." + (w === "all" ? "" : " Try a longer window.");
+      ? total + (total === 1 ? " decision" : " decisions") + ", " + label + (stats.first != null ? ", " + fmtWhen(stats.first) + " – " + fmtWhen(stats.last) : "") + "." + auto
+      : "No decisions in the " + label + "." + (w === "all" ? "" : " Try a longer window.") + auto;
     $("cal-grid").hidden = total === 0;
     if (!total) return;
 
@@ -423,6 +429,14 @@
     fill("rows-outcome", outcomeRows);
 
     fill("rows-cli", Object.entries(stats.byCli).sort((a, c) => c[1] - a[1]).map(([cli, n]) => statRow(cli, "", n, total)));
+
+    const g = signals;
+    fill("rows-signals", [
+      statRow("Switched by hand", "You picked another model after a decision. The only sign in this data that a decision was wrong.", g.switches, total),
+      statRow("To a stronger tier", "The router may have aimed too low.", g.toStronger, total),
+      statRow("To a weaker tier", "The router may have aimed too high.", g.toWeaker, total),
+      statRow("Within 10 minutes", "A quick correction is a clearer signal than a late one.", g.within10min, total),
+    ]);
   }
 
   // ---- tokens ----

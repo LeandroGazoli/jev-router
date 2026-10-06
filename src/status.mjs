@@ -84,11 +84,13 @@ export const STATUS_DIR = DIR;
 // ".jsonl" names, not ".json", so pruneStale's `.json`-only filter above never deletes them.
 const LEDGER_NAME = "routing.jsonl";
 const USAGE_NAME = "usage.jsonl";
+const SIGNALS_NAME = "signals.jsonl";
 const MAX_LEDGER_LINES = 20000;
 // One line per upstream request rather than per turn, so it fills faster than the ledger.
 const MAX_USAGE_LINES = 50000;
 const ledgerFile = (dir) => join(dir, LEDGER_NAME);
 const usageFile = (dir) => join(dir, USAGE_NAME);
+const signalsFile = (dir) => join(dir, SIGNALS_NAME);
 const writes = new Map();
 
 function appendLine(file, dir, entry, maxLines) {
@@ -148,6 +150,15 @@ export function appendUsage(entry, dir = DIR) {
   appendLine(usageFile(dir), dir, entry, MAX_USAGE_LINES);
 }
 
+/**
+ * Appends a moment where the person acted on a routing decision, such as switching model by hand
+ * after the router had chosen one. These are the only evidence the ledger has that a decision was
+ * wrong, which the router's own confidence cannot say. No prompt text.
+ */
+export function appendSignal(entry, dir = DIR) {
+  appendLine(signalsFile(dir), dir, entry, MAX_LEDGER_LINES);
+}
+
 /** Keeps only the last `maxLines` lines of a ledger file. Exposed for testing. */
 export function rotateLedgerIfLarge(file, maxLines = MAX_LEDGER_LINES) {
   try {
@@ -165,6 +176,11 @@ export function rotateLedgerIfLarge(file, maxLines = MAX_LEDGER_LINES) {
 /** Parsed ledger entries whose `at` is >= `since` (when given), oldest first, capped at `limit`. */
 export function readLedger({ since, limit = 1000, dir = DIR } = {}) {
   return readLines(ledgerFile(dir), { since, limit });
+}
+
+/** Same shape as readLedger, for the person's reactions to decisions. */
+export function readSignals({ since, limit = 100000, dir = DIR } = {}) {
+  return readLines(signalsFile(dir), { since, limit });
 }
 
 /** Same shape as readLedger, for the per-request token records. */
