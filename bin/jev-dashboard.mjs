@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 import { writeFileSync } from "node:fs";
 import { launchDashboard } from "../src/dashboard-launch.mjs";
-import { EXPORT_FORMATS } from "../src/export.mjs";
-import { readLedger } from "../src/status.mjs";
+import { EXPORT_FORMATS, USAGE_EXPORT_FORMATS } from "../src/export.mjs";
+import { readLedger, readUsage } from "../src/status.mjs";
 
 const argv = process.argv.slice(2);
 
@@ -16,12 +16,13 @@ if (argv.includes("--help") || argv.includes("-h")) {
   process.stdout.write(
     [
       "Usage: jev-dashboard [--port <n>] [--open] [--new-token]",
-      "       jev-dashboard --export <csv|json> [--out <file>]",
+      "       jev-dashboard --export <csv|json> [--tokens] [--out <file>]",
       "",
       "  --port <n>    port to listen on (default: JEV_DASHBOARD_PORT or 8787)",
       "  --open        open the dashboard in your default browser (or JEV_DASHBOARD_OPEN=1)",
       "  --new-token   replace the saved access token; previously shared links stop working",
       "  --export <f>  print the decision history as csv or json and exit (no server, no prompt text);",
+      "                with --tokens it prints the per-request token usage instead;",
       "                with --out <file> it is written to that file instead of stdout",
       "",
     ].join("\n"),
@@ -31,12 +32,13 @@ if (argv.includes("--help") || argv.includes("-h")) {
 
 const exportAt = argv.indexOf("--export");
 if (exportAt !== -1) {
-  const format = EXPORT_FORMATS[argv[exportAt + 1]];
+  const tokens = argv.includes("--tokens");
+  const format = (tokens ? USAGE_EXPORT_FORMATS : EXPORT_FORMATS)[argv[exportAt + 1]];
   if (!format) {
     process.stderr.write("[jev] --export needs a format: csv or json\n");
     process.exit(1);
   }
-  const text = format.toText(readLedger({ limit: 100000 }));
+  const text = format.toText(tokens ? readUsage({ limit: 100000 }) : readLedger({ limit: 100000 }));
   const outAt = argv.indexOf("--out");
   if (outAt !== -1 && argv[outAt + 1]) {
     writeFileSync(argv[outAt + 1], text);

@@ -4,8 +4,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { THRESHOLDS } from "./config.mjs";
-import { EXPORT_FORMATS, exportFilename } from "./export.mjs";
-import { listStatuses, readLedger } from "./status.mjs";
+import { EXPORT_FORMATS, USAGE_EXPORT_FORMATS, exportFilename } from "./export.mjs";
+import { STALE_AFTER_MS, listStatuses, readLedger, readUsage } from "./status.mjs";
 
 // The product is being renamed: this is the one place the name lives. The page and the
 // sign-in screen both read it, so the rename is a single edit.
@@ -86,13 +86,68 @@ export function aggregate(entries, { minConfidence, stepUpConfidence } = THRESHO
   return { total: entries.length, byTier, byCli, bands, outcomes, first, last };
 }
 
+const TOKEN_KINDS = ["input", "cacheRead", "cacheWrite", "output"];
+const sumTokens = (entry) => TOKEN_KINDS.reduce((sum, kind) => sum + (Number(entry[kind]) || 0), 0);
+
+/**
+ * Token spend over a set of per-request usage records, in the four non-overlapping kinds the API
+ * reports (see usage.mjs). `total` includes cache reads, which are the bulk of a long session but
+ * are billed at a fraction of fresh input, so the kinds are kept separate rather than blended.
+ */
+export function aggregateUsage(entries) {
+  const sum = { input: 0, cacheRead: 0, cacheWrite: 0, output: 0 };
+  const byTier = {};
+  const byCli = {};
+  const add = (into, entry) => {
+    into.requests = (into.requests ?? 0) + 1;
+    for (const kind of TOKEN_KINDS) into[kind] = (into[kind] ?? 0) + (Number(entry[kind]) || 0);
+    into.total = (into.total ?? 0) + sumTokens(entry);
+  };
+  const totals = { requests: 0, total: 0 };
+  for (const entry of entries) {
+    add(totals, entry);
+    if (entry.tier) add((byTier[entry.tier] ??= {}), entry);
+    if (entry.cli) add((byCli[entry.cli] ??= {}), entry);
+  }
+  for (const kind of TOKEN_KINDS) sum[kind] = totals[kind] ?? 0;
+  return { requests: totals.requests, total: totals.total, ...sum, byTier, byCli };
+}
+
+/**
+ * A prompt as a person wrote it. Claude Code wraps some turns in machine text: the caveat and
+ * output blocks around a slash command, system reminders, and notices from other sessions. Left
+ * in, a `/compact` turn shows up as a paragraph of boilerplate instead of what was typed.
+ */
+export function promptPreview(text, max = 400) {
+  if (typeof text !== "string") return undefined;
+  let clean = text
+    .replace(/<(local-command-caveat|local-command-stdout|system-reminder)>[\s\S]*?<\/\1>/g, "")
+    .replace(/<command-(?:message|args)>[\s\S]*?<\/command-(?:message|args)>/g, "");
+  const command = /<command-name>([\s\S]*?)<\/command-name>/.exec(clean)?.[1]?.trim();
+  clean = clean.replace(/<command-name>[\s\S]*?<\/command-name>/g, "").trim();
+  clean = clean.replace(/\s+/g, " ");
+  if (command) clean = clean ? `${command} ${clean}` : command;
+  if (!clean) return undefined;
+  return clean.length > max ? `${clean.slice(0, max)}…` : clean;
+}
+
 /**
  * The page needs a handful of fields per session, not the whole status file (which also holds
  * every recent prompt and the exact router exchange). Sending only what is shown keeps the
- * payload small and the exposure minimal.
+ * payload small and the exposure minimal. `recent` is the session's last few decisions, so a
+ * session reads as a conversation rather than as its latest turn alone.
  */
-function sessionView(status, maxPrompt = 400) {
-  const prompt = typeof status.prompt === "string" ? status.prompt : undefined;
+function sessionView(status, usage, maxPrompt = 400) {
+  const recent = (Array.isArray(status.history) ? status.history : [])
+    .slice(-RECENT_TURNS)
+    .map((turn) => ({
+      at: turn.at,
+      tier: turn.tier,
+      confidence: turn.confidence,
+      family: reasonFamily(turn.reason),
+      prompt: promptPreview(turn.prompt, 160),
+    }))
+    .reverse();
   return {
     sessionId: status.sessionId,
     manual: status.manual === true,
@@ -102,8 +157,29 @@ function sessionView(status, maxPrompt = 400) {
     reason: status.reason,
     family: status.manual ? "manual" : reasonFamily(status.reason),
     at: status.at,
-    prompt: prompt && prompt.length > maxPrompt ? `${prompt.slice(0, maxPrompt)}…` : prompt,
+    // Last request seen, not last decision: a long tool loop makes requests without deciding.
+    activeAt: Math.max(status.at ?? 0, usage?.lastAt ?? 0) || undefined,
+    prompt: promptPreview(status.prompt, maxPrompt),
+    tokens: usage ? { requests: usage.requests, total: usage.total, input: usage.input, output: usage.output, cacheRead: usage.cacheRead, cacheWrite: usage.cacheWrite } : undefined,
+    recent,
   };
+}
+
+const RECENT_TURNS = 8;
+
+/** Token totals and last-request time per session, from the per-request usage records. */
+function usageBySession(dir, now = Date.now()) {
+  const bySession = new Map();
+  for (const entry of readUsage({ since: now - STALE_AFTER_MS, dir })) {
+    if (!entry.session) continue;
+    const into = bySession.get(entry.session) ?? { requests: 0, total: 0, input: 0, output: 0, cacheRead: 0, cacheWrite: 0, lastAt: 0 };
+    into.requests += 1;
+    into.total += sumTokens(entry);
+    for (const kind of TOKEN_KINDS) into[kind] += Number(entry[kind]) || 0;
+    into.lastAt = Math.max(into.lastAt, Number(entry.at) || 0);
+    bySession.set(entry.session, into);
+  }
+  return bySession;
 }
 
 const json = (res, status, body) => {
@@ -167,8 +243,9 @@ export async function startDashboard({ port = 0, token = randomToken(), statusDi
     }
 
     if (url.pathname === "/api/sessions") {
-      // An arrow function, not .map(sessionView): map would pass the row index as maxPrompt.
-      return json(res, 200, listStatuses(statusDir).map((status) => sessionView(status)));
+      const usage = usageBySession(statusDir);
+      // An arrow function, not .map(sessionView): map would pass the row index as an argument.
+      return json(res, 200, listStatuses(statusDir).map((status) => sessionView(status, usage.get(status.sessionId))));
     }
 
     if (url.pathname === "/api/stats") {
@@ -180,6 +257,7 @@ export async function startDashboard({ port = 0, token = randomToken(), statusDi
         now: Date.now(),
         thresholds: { minConfidence: THRESHOLDS.minConfidence, stepUpConfidence: THRESHOLDS.stepUpConfidence },
         stats: aggregate(entries),
+        usage: aggregateUsage(readUsage({ since: win.since, dir: statusDir })),
       });
     }
 
@@ -192,16 +270,21 @@ export async function startDashboard({ port = 0, token = randomToken(), statusDi
 
     if (url.pathname === "/api/export") {
       const formatName = url.searchParams.get("format") ?? "csv";
-      const format = EXPORT_FORMATS[formatName];
+      const kind = url.searchParams.get("kind") ?? "routing";
+      if (kind !== "routing" && kind !== "tokens") return json(res, 400, { error: "kind must be routing or tokens" });
+      const format = (kind === "tokens" ? USAGE_EXPORT_FORMATS : EXPORT_FORMATS)[formatName];
       if (!format) return json(res, 400, { error: "format must be csv or json" });
       // Without a window the whole retained ledger is exported, as before.
       const win = parseWindow(url.searchParams.get("window"), "all");
       if (!win) return json(res, 400, { error: "window must be one of 1h, 24h, 7d, all" });
       const since = url.searchParams.has("since") ? Number(url.searchParams.get("since")) : win.since;
-      const entries = readLedger({ since, limit: LEDGER_READ_LIMIT, dir: statusDir });
+      const entries =
+        kind === "tokens"
+          ? readUsage({ since, limit: LEDGER_READ_LIMIT, dir: statusDir })
+          : readLedger({ since, limit: LEDGER_READ_LIMIT, dir: statusDir });
       res.writeHead(200, {
         "content-type": format.type,
-        "content-disposition": `attachment; filename="${exportFilename(formatName, new Date(), url.searchParams.has("window") ? win.name : undefined)}"`,
+        "content-disposition": `attachment; filename="${exportFilename(formatName, new Date(), url.searchParams.has("window") ? win.name : undefined, kind)}"`,
         [IDENTITY_HEADER]: "1",
       });
       return res.end(format.toText(entries));

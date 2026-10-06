@@ -15,7 +15,8 @@ import {
 import { askJev } from "./router.mjs";
 import { decide } from "./policy.mjs";
 import { log } from "./log.mjs";
-import { appendRouting, writeDecision, writeStatus } from "./status.mjs";
+import { appendRouting, appendUsage, writeDecision, writeStatus } from "./status.mjs";
+import { tapResponse } from "./usage.mjs";
 
 const ANTHROPIC_BASE_URL = "https://api.anthropic.com";
 const debug = (line) => process.env.JEV_DEBUG && log(line);
@@ -229,6 +230,8 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
     req.on("data", (c) => chunks.push(c));
     req.on("end", async () => {
       let out = Buffer.concat(chunks);
+      // Who a request's token usage is filed under; set once the request is understood.
+      let usageFor = null;
 
       if (/^\/v1\/messages/.test(req.url ?? "")) {
         try {
@@ -244,6 +247,7 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
           // for titles and summaries, which must never be pinned up to the session's tier.
           if (!isAuto(body.model)) {
             debug(`passthrough, user selected ${body.model}`);
+            usageFor = { session: sessionOf(body) || conversationKey(body), tier: tierOf(body.model), model: body.model };
             // Only a real agent turn reflects the user's choice. Claude Code's own auxiliary
             // calls carry no tools and must not flip the status line to manual mid-session.
             if (Array.isArray(body.tools)) {
@@ -312,6 +316,7 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
             const model = state.model ?? idOf(tier);
             debug(`${key} rewrite ${body.model} -> ${model}`);
             applyTier(body, tier, model);
+            usageFor = { session: sessionOf(body) || key, tier, model, routed: true, aux: isAux };
             // Publish what went out. Claude Code's UI shows the row you picked, not the tier
             // it resolved to, so the status line is the only place this is visible.
             // `claude -p` omits metadata on the first request of a session, so there is no
@@ -381,6 +386,22 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
             return;
           }
           res.writeHead(up.statusCode, up.headers);
+          // Count what the request cost, as the API reports it. token counting
+          // (/count_tokens) is a different, free endpoint and is not spend.
+          if (usageFor && up.statusCode >= 200 && up.statusCode < 300 && !/count_tokens/.test(req.url ?? "")) {
+            tapResponse(up, ({ tokens, model }) =>
+              appendUsage({
+                at: Date.now(),
+                cli: "claude",
+                session: usageFor.session,
+                tier: usageFor.tier ?? tierOf(model) ?? null,
+                model: model ?? usageFor.model,
+                routed: usageFor.routed === true,
+                aux: usageFor.aux === true,
+                ...tokens,
+              }),
+            );
+          }
           // Report the model the API itself says it used, so the routing can be confirmed
           // from the wire rather than trusted from our own decision log. Claude Code's UI
           // always shows the model it asked for, never the one we rewrote to.

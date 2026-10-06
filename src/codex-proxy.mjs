@@ -6,7 +6,8 @@ import { availableTiers, shouldUseExactModel } from "./config.mjs";
 import { askJev } from "./router.mjs";
 import { decide } from "./policy.mjs";
 import { log } from "./log.mjs";
-import { appendRouting, writeDecision, writeStatus } from "./status.mjs";
+import { appendRouting, appendUsage, writeDecision, writeStatus } from "./status.mjs";
+import { tapResponse } from "./usage.mjs";
 
 const CHATGPT_BASE_URL = "https://chatgpt.com/backend-api/codex";
 const API_BASE_URL = "https://api.openai.com/v1";
@@ -177,6 +178,8 @@ export async function startCodexProxy({
     req.on("end", async () => {
       let out = Buffer.concat(chunks);
       let routing;
+      // Who a request's token usage is filed under; set once the request is understood.
+      let usageFor = null;
       if (req.method === "POST" && /\/responses(?:\?|$)/.test(req.url ?? "")) {
         try {
           const body = JSON.parse(out.toString());
@@ -250,6 +253,13 @@ export async function startCodexProxy({
             if (prompt && !explaining) writeStatus(statusId, { manual: true, at: Date.now() });
           }
           out = Buffer.from(JSON.stringify(body));
+          // `body.model` is the model that goes upstream, whether routed or chosen by the user.
+          usageFor = {
+            session: statusId || "codex",
+            tier: routing?.tier ?? codexTierOf(body.model),
+            model: body.model,
+            routed: routing != null,
+          };
         } catch (err) {
           debug(`codex passthrough, could not process body: ${err.message}`);
         }
@@ -290,6 +300,19 @@ export async function startCodexProxy({
             return;
           }
 
+          if (usageFor && response.statusCode >= 200 && response.statusCode < 300) {
+            tapResponse(response, ({ tokens, model }) =>
+              appendUsage({
+                at: Date.now(),
+                cli: "codex",
+                session: usageFor.session,
+                tier: usageFor.tier ?? codexTierOf(model) ?? null,
+                model: model ?? usageFor.model,
+                routed: usageFor.routed,
+                ...tokens,
+              }),
+            );
+          }
           const inspectForDecision = routing && response.statusCode >= 200 && response.statusCode < 300;
           if (inspectForDecision) delete responseHeaders["content-length"];
           res.writeHead(response.statusCode, responseHeaders);

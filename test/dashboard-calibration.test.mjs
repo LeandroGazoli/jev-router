@@ -165,7 +165,8 @@ test("/api/sessions sends only what the page shows, with the policy family", asy
     assert.equal(s1.family, "overruled");
     assert.equal(s1.model, "claude-sonnet-5-5");
     assert.ok(s1.prompt.length <= 401, "the prompt is cut for the listing");
-    assert.ok(!("jev" in s1) && !("history" in s1), "the router exchange and older prompts stay out");
+    assert.ok(!("jev" in s1) && !("history" in s1), "the router exchange and the raw history stay out");
+    assert.deepEqual(s1.recent.map((turn) => turn.prompt), ["an older prompt"], "recent turns are a trimmed view of it");
     assert.equal(sessions.find((s) => s.sessionId === "s2").family, "manual");
   });
 });

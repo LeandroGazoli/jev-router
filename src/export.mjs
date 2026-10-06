@@ -60,6 +60,54 @@ export const EXPORT_FORMATS = {
   json: { toText: ledgerToJson, type: "application/json; charset=utf-8" },
 };
 
-/** `jev-routing-2026-10-05.csv`, or `jev-routing-24h-2026-10-05.csv` for a windowed export. */
-export const exportFilename = (format, now = new Date(), windowName) =>
-  `jev-routing${windowName ? `-${windowName}` : ""}-${now.toISOString().slice(0, 10)}.${format}`;
+// Token usage, one row per upstream request. Same rules as above: no prompt text.
+export const USAGE_COLUMNS = [
+  "time",
+  "cli",
+  "session",
+  "tier",
+  "model",
+  "routed",
+  "input",
+  "cacheRead",
+  "cacheWrite",
+  "output",
+  "total",
+];
+
+const usageRow = (entry) => ({
+  time: Number.isFinite(entry.at) ? new Date(entry.at).toISOString() : "",
+  cli: entry.cli ?? "",
+  session: entry.session ?? "",
+  tier: entry.tier ?? "",
+  model: entry.model ?? "",
+  routed: entry.routed ?? "",
+  input: entry.input ?? "",
+  cacheRead: entry.cacheRead ?? "",
+  cacheWrite: entry.cacheWrite ?? "",
+  output: entry.output ?? "",
+  total: (entry.input ?? 0) + (entry.cacheRead ?? 0) + (entry.cacheWrite ?? 0) + (entry.output ?? 0),
+});
+
+export function usageToCsv(entries) {
+  const lines = [USAGE_COLUMNS.join(",")];
+  for (const entry of entries) {
+    const row = usageRow(entry);
+    lines.push(USAGE_COLUMNS.map((column) => cell(row[column])).join(","));
+  }
+  return `${lines.join("\r\n")}\r\n`;
+}
+
+export const usageToJson = (entries) => `${JSON.stringify(entries.map(usageRow), null, 2)}\n`;
+
+export const USAGE_EXPORT_FORMATS = {
+  csv: { toText: usageToCsv, type: "text/csv; charset=utf-8" },
+  json: { toText: usageToJson, type: "application/json; charset=utf-8" },
+};
+
+/**
+ * `jev-routing-2026-10-05.csv`, or `jev-routing-24h-2026-10-05.csv` for a windowed export;
+ * `jev-tokens-...` for the token usage records.
+ */
+export const exportFilename = (format, now = new Date(), windowName, kind = "routing") =>
+  `jev-${kind}${windowName ? `-${windowName}` : ""}-${now.toISOString().slice(0, 10)}.${format}`;
