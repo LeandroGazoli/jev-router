@@ -32,9 +32,11 @@ function clampToAvailable(tier, available) {
  * @param {string} input.current       tier currently active in the session
  * @param {string[]} input.available   tier names the account can run
  * @param {number} input.contextTokens approximate size of the conversation so far
+ * @param {boolean} [input.cacheWarm] false when the conversation's prompt cache has already
+ *   expired, which makes a downgrade free of rebuild cost; unknown (the default) is treated as warm
  * @returns {{tier: string, reason: string, changed: boolean}}
  */
-export function decide({ prompt, jev, current, available, contextTokens = 0 }) {
+export function decide({ prompt, jev, current, available, contextTokens = 0, cacheWarm = true }) {
   const settle = (tier, reason) => {
     const final = clampToAvailable(tier, available) ?? current;
     const why = final === tier ? reason : `${reason}+unavailable`;
@@ -62,7 +64,14 @@ export function decide({ prompt, jev, current, available, contextTokens = 0 }) {
     if (rankOf(target) > ceiling) return settle(TIER_NAMES[ceiling], "low-confidence-capped");
   }
 
-  if (rankOf(target) < rankOf(current) && contextTokens > THRESHOLDS.downgradeMaxContextTokens) {
+  // A smaller model may simply not fit what the conversation has grown to.
+  const limit = THRESHOLDS.tierContextLimits?.[target];
+  if (rankOf(target) < rankOf(current) && limit && contextTokens > limit) {
+    return settle(current, "context-too-large-for-tier");
+  }
+
+  // Only a warm cache is worth protecting: after it expires, any model has to rebuild it.
+  if (cacheWarm && rankOf(target) < rankOf(current) && contextTokens > THRESHOLDS.downgradeMaxContextTokens) {
     return settle(current, "downgrade-not-worth-cache-rebuild");
   }
 

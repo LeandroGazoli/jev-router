@@ -11,6 +11,7 @@ import {
   tierSpec,
   isAuto,
   shouldUseExactModel,
+  THRESHOLDS,
 } from "./config.mjs";
 import { askJev } from "./router.mjs";
 import { decide } from "./policy.mjs";
@@ -277,6 +278,11 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
             const key = conversationKey(body);
             const state = stateFor(key);
             state.switched = false;
+            // The provider's prompt cache lives a few minutes past its last use. A conversation
+            // idle for longer has no cache left to protect, so a downgrade costs nothing extra.
+            const requestAt = Date.now();
+            const cacheWarm = state.lastAt != null && requestAt - state.lastAt < THRESHOLDS.cacheTtlMs;
+            state.lastAt = requestAt;
             // What the prompt cache was built on, which is what a downgrade would discard.
             const current = state.tier ?? "opus";
             // No tier has been fixed for this conversation yet, so there is no cache built on
@@ -295,7 +301,13 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
               );
               const available = [...new Set(models.map((model) => model.tier))];
               const currentModel = state.model ?? modelForTier(models, current);
-              const contextTokens = Math.round(JSON.stringify(body.messages).length / 4);
+              // The text of the messages alone leaves out the system prompt and tool definitions,
+              // which in Claude Code run to tens of thousands of tokens. What the API reported for
+              // the previous request is the real size so far and a floor for this one.
+              const contextTokens = Math.max(
+                Math.round(JSON.stringify(body.messages).length / 4),
+                state.realContext ?? 0,
+              );
               const jev = await route({ prompt, current: currentModel, contextTokens, models });
               const chosen = models.find((model) => model.id === jev?.choice);
               const tierAnswer = jev && { ...jev, choice: chosen?.tier };
@@ -305,6 +317,7 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
                 current,
                 available,
                 contextTokens: noTierYet ? 0 : contextTokens,
+                cacheWarm,
               });
               const model =
                 shouldUseExactModel(reason, chosen?.tier, tier)
@@ -338,7 +351,7 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
             const model = state.model ?? idOf(tier);
             debug(`${key} rewrite ${body.model} -> ${model}`);
             applyTier(body, tier, model);
-            usageFor = { session: sessionOf(body) || key, tier, model, routed: true, aux: isAux };
+            usageFor = { session: sessionOf(body) || key, convoKey: key, tier, model, routed: true, aux: isAux };
             // Publish what went out. Claude Code's UI shows the row you picked, not the tier
             // it resolved to, so the status line is the only place this is visible.
             // `claude -p` omits metadata on the first request of a session, so there is no
@@ -412,18 +425,23 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
           // Count what the request cost, as the API reports it. token counting
           // (/count_tokens) is a different, free endpoint and is not spend.
           if (usageFor && up.statusCode >= 200 && up.statusCode < 300 && !/count_tokens/.test(req.url ?? "")) {
-            tapResponse(up, ({ tokens, model }) =>
+            tapResponse(up, ({ tokens, model }) => {
+              const state = usageFor.convoKey ? convos.get(usageFor.convoKey) : null;
+              if (state) {
+                state.realContext = (tokens.input ?? 0) + (tokens.cacheRead ?? 0) + (tokens.cacheWrite ?? 0) + (tokens.output ?? 0);
+              }
               appendUsage({
                 at: Date.now(),
                 cli: "claude",
                 session: usageFor.session,
+                key: usageFor.convoKey,
                 tier: usageFor.tier ?? tierOf(model) ?? null,
                 model: model ?? usageFor.model,
                 routed: usageFor.routed === true,
                 aux: usageFor.aux === true,
                 ...tokens,
-              }),
-            );
+              });
+            });
           }
           // Report the model the API itself says it used, so the routing can be confirmed
           // from the wire rather than trusted from our own decision log. Claude Code's UI

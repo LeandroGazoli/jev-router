@@ -25,7 +25,8 @@ builders, longer timeouts), the launchers (no `JEV_API_KEY` gate), and one test 
 | `JEV_DASHBOARD_PORT` | `8787` | Port for `jev-dashboard` (read-only web view of sessions and the routing ledger) |
 | `JEV_DASHBOARD` | unset | `1` makes `jev-claude`/`jev-codex` serve the dashboard during the session and print its link |
 | `JEV_DASHBOARD_OPEN` | unset | `1` opens the dashboard in the default browser when it starts |
-| `JEV_DOWNGRADE_CUTOFF_TOKENS` | `20000` | Conversation size above which an automatic downgrade is refused (prompt-cache rebuild not worth it) |
+| `JEV_DOWNGRADE_CUTOFF_TOKENS` | `20000` | Conversation size above which an automatic downgrade is refused (prompt-cache rebuild not worth it), while the cache is warm |
+| `JEV_CACHE_TTL_MS` | `300000` | How long the provider keeps a prompt cache after its last use; once a conversation has been idle longer, a downgrade is no longer held back by size |
 
 ## Notes
 

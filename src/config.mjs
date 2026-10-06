@@ -65,6 +65,18 @@ export const THRESHOLDS = {
    */
   downgradeMaxContextTokens: Number(process.env.JEV_DOWNGRADE_CUTOFF_TOKENS ?? 20000),
   /**
+   * How long the provider keeps a prompt cache alive after its last use (5 minutes by default;
+   * set JEV_CACHE_TTL_MS to 3600000 if your sessions use the 1-hour cache). Once a conversation
+   * has been idle longer than this, the cache is gone anyway, so a downgrade no longer throws
+   * anything away and the size guard above does not apply.
+   */
+  cacheTtlMs: Number(process.env.JEV_CACHE_TTL_MS ?? 300000),
+  /**
+   * Largest conversation a tier can be handed, with room left for its reply. Haiku's window is
+   * 200K, so a long conversation cannot move down to it, however cold the cache is.
+   */
+  tierContextLimits: { haiku: 160000 },
+  /**
    * Per-attempt timeout and hard wall-clock deadline for the whole routing call against the
    * local llama-server. Generous because the first call after the model loads is slow.
    */

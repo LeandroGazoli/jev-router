@@ -2,7 +2,7 @@ import http from "node:http";
 import https from "node:https";
 import { createHash, randomUUID } from "node:crypto";
 import { writeFileSync } from "node:fs";
-import { availableTiers, shouldUseExactModel } from "./config.mjs";
+import { THRESHOLDS, availableTiers, shouldUseExactModel } from "./config.mjs";
 import { askJev } from "./router.mjs";
 import { decide } from "./policy.mjs";
 import { log } from "./log.mjs";
@@ -181,6 +181,7 @@ export async function startCodexProxy({
       let routing;
       // Who a request's token usage is filed under; set once the request is understood.
       let usageFor = null;
+      let convoKey = null;
       if (req.method === "POST" && /\/responses(?:\?|$)/.test(req.url ?? "")) {
         try {
           const body = JSON.parse(out.toString());
@@ -204,7 +205,13 @@ export async function startCodexProxy({
             let tier = current;
             let model = currentModel;
             if (prompt && !explaining) {
-              const contextTokens = Math.round(JSON.stringify(body.input).length / 4);
+              // The size the API reported for the previous request is the real one so far.
+              const contextTokens = Math.max(
+                Math.round(JSON.stringify(body.input).length / 4),
+                states.get(key)?.realContext ?? 0,
+              );
+              // Idle longer than the provider keeps its cache: nothing left to protect from a downgrade.
+              const cacheWarm = Date.now() - (states.get(key)?.lastAt ?? 0) < THRESHOLDS.cacheTtlMs;
               const jev = await route({ prompt, current: currentModel, contextTokens, models: candidates });
               const chosen = candidates.find((candidate) => candidate.id === jev?.choice);
               const decision = decide({
@@ -213,6 +220,7 @@ export async function startCodexProxy({
                 current,
                 available,
                 contextTokens: noTierYet ? 0 : contextTokens,
+                cacheWarm,
               });
               tier = decision.tier;
               model =
@@ -221,7 +229,7 @@ export async function startCodexProxy({
                   : tier === current
                     ? currentModel
                     : modelForTier(candidates, tier);
-              states.set(key, { tier, model, decidedAt: Date.now() });
+              states.set(key, { tier, model, decidedAt: Date.now(), realContext: states.get(key)?.realContext });
               routing = {
                 prompt,
                 tier,
@@ -249,6 +257,9 @@ export async function startCodexProxy({
               debug(`${key} ${current} -> ${tier} (${decision.reason}) | ${prompt.slice(0, 60)}`);
             }
             applyCodexTier(body, tier, models, model);
+            const seen = states.get(key);
+            if (seen) seen.lastAt = Date.now();
+            convoKey = key;
           } else {
             const prompt = codexNewTurnPrompt(body);
             const explaining = prompt?.includes("<jev-explain>") || /^\$jev-explain\b/i.test(prompt ?? "");
@@ -276,6 +287,7 @@ export async function startCodexProxy({
           // `body.model` is the model that goes upstream, whether routed or chosen by the user.
           usageFor = {
             session: statusId || "codex",
+            convoKey,
             tier: routing?.tier ?? codexTierOf(body.model),
             model: body.model,
             routed: routing != null,
@@ -321,17 +333,20 @@ export async function startCodexProxy({
           }
 
           if (usageFor && response.statusCode >= 200 && response.statusCode < 300) {
-            tapResponse(response, ({ tokens, model }) =>
+            tapResponse(response, ({ tokens, model }) => {
+              const state = usageFor.convoKey ? states.get(usageFor.convoKey) : null;
+              if (state) state.realContext = (tokens.input ?? 0) + (tokens.cacheRead ?? 0) + (tokens.output ?? 0);
               appendUsage({
                 at: Date.now(),
                 cli: "codex",
                 session: usageFor.session,
+                key: usageFor.convoKey ?? undefined,
                 tier: usageFor.tier ?? codexTierOf(model) ?? null,
                 model: model ?? usageFor.model,
                 routed: usageFor.routed,
                 ...tokens,
-              }),
-            );
+              });
+            });
           }
           const inspectForDecision = routing && response.statusCode >= 200 && response.statusCode < 300;
           if (inspectForDecision) delete responseHeaders["content-length"];

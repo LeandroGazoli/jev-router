@@ -193,7 +193,8 @@ One Jev call per fresh user turn selects a shared abstract tier:
 - explicit requests such as `use opus`, `use luna`, or `use strong` win;
 - failure, timeout, or an unrecognised Jev answer keeps the current model;
 - low confidence never downgrades and caps upgrades at the balanced tier;
-- large conversations refuse downgrades that would waste more prompt-cache work than they save;
+- large conversations refuse downgrades that would waste more prompt-cache work than they save, but only while the cache is still warm (see `JEV_CACHE_TTL_MS`); the size comes from what the API reported for the previous request, not from an estimate of the message text;
+- a conversation too big for a smaller model's window (Haiku: 200K) never moves down to it;
 - unavailable tiers step upward rather than silently choosing a weaker model;
 - the long tier is disabled unless `JEV_ALLOW_FABLE=1`.
 
@@ -213,7 +214,8 @@ sub-agents are pinned separately. Routing is fail-open: Jev failure never blocks
 | `JEV_CODEX_BALANCED_MODEL` | Codex | Balanced model; defaults to `gpt-5.6-terra`. |
 | `JEV_CODEX_STRONG_MODEL` | Codex | Strong model; defaults to `gpt-5.6-sol`. |
 | `JEV_CODEX_LONG_MODEL` | Codex | Long model; defaults to `gpt-6-astra`. |
-| `JEV_DOWNGRADE_CUTOFF_TOKENS` | Both | Conversation size (in tokens) above which an automatic downgrade is refused; defaults to `20000`. |
+| `JEV_DOWNGRADE_CUTOFF_TOKENS` | Both | Conversation size (in tokens) above which an automatic downgrade is refused while the cache is warm; defaults to `20000`. |
+| `JEV_CACHE_TTL_MS` | Both | How long the provider keeps a prompt cache after its last use, in ms; defaults to `300000` (5 min). Use `3600000` for the 1-hour cache. After that idle time a downgrade is no longer held back by size. |
 
 Existing environment variables have highest precedence, followed by `.env` in the launch
 directory, `~/.jev-router.env`, and the legacy `~/.jev-claude.env`.
