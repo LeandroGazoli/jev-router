@@ -1,4 +1,4 @@
-import { TIER_NAMES, THRESHOLDS, OVERRIDE_PATTERNS, rankOf } from "./config.mjs";
+import { TIER_NAMES, THRESHOLDS, OVERRIDE_PATTERNS, paybackRequests, rankOf } from "./config.mjs";
 
 /** The tier the user named explicitly in the prompt, or null. */
 export function detectOverride(prompt) {
@@ -32,11 +32,14 @@ function clampToAvailable(tier, available) {
  * @param {string} input.current       tier currently active in the session
  * @param {string[]} input.available   tier names the account can run
  * @param {number} input.contextTokens approximate size of the conversation so far
+ * @param {number} [input.expectedRequests] requests this conversation is expected to make from
+ *   here on. When given, a downgrade is refused unless it will pay back the cache rebuild
+ *   (see paybackRequests); when absent, the size cutoff below decides instead
  * @param {boolean} [input.cacheWarm] false when the conversation's prompt cache has already
  *   expired, which makes a downgrade free of rebuild cost; unknown (the default) is treated as warm
  * @returns {{tier: string, reason: string, changed: boolean}}
  */
-export function decide({ prompt, jev, current, available, contextTokens = 0, cacheWarm = true }) {
+export function decide({ prompt, jev, current, available, contextTokens = 0, cacheWarm = true, expectedRequests }) {
   const settle = (tier, reason) => {
     const final = clampToAvailable(tier, available) ?? current;
     const why = final === tier ? reason : `${reason}+unavailable`;
@@ -71,8 +74,12 @@ export function decide({ prompt, jev, current, available, contextTokens = 0, cac
   }
 
   // Only a warm cache is worth protecting: after it expires, any model has to rebuild it.
-  if (cacheWarm && rankOf(target) < rankOf(current) && contextTokens > THRESHOLDS.downgradeMaxContextTokens) {
-    return settle(current, "downgrade-not-worth-cache-rebuild");
+  if (cacheWarm && rankOf(target) < rankOf(current)) {
+    // A cache this small is cheap to rebuild whatever happens next; above that, what matters is
+    // whether the conversation will run long enough on the cheaper tier to earn the rebuild back.
+    const big = contextTokens > THRESHOLDS.downgradeMaxContextTokens;
+    const notWorth = big && (expectedRequests == null || expectedRequests < paybackRequests(current, target));
+    if (notWorth) return settle(current, "downgrade-not-worth-cache-rebuild");
   }
 
   // Climb one tier at a time unless Jev is sure; a doubtful jump to the top is the costly mistake.

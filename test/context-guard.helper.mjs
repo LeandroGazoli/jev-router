@@ -34,7 +34,7 @@ export async function until(check, ms = 2000) {
 }
 
 /** Two turns in one conversation: the router picks sonnet, then asks for haiku. Returns turn 2's decision. */
-export async function secondTurnDecision(t, { usage, startProxy }) {
+export async function secondTurnDecision(t, { usage, startProxy, loopRequests = 0 }) {
   const since = Date.now() - 1;
   const choices = ["claude-sonnet-5-5", "claude-haiku-4-5-20251001"];
   const { port, close } = await startProxy({
@@ -50,6 +50,13 @@ export async function secondTurnDecision(t, { usage, startProxy }) {
   });
   await post(port, turn());
   await until(() => readUsage({ since }));
+  // The first turn keeps working: tool-loop continuations, which are requests but not new turns.
+  for (let i = 0; i < loopRequests; i++) {
+    await post(port, turn([
+      { role: "assistant", content: [{ type: "tool_use", id: `t${i}`, name: "Bash", input: {} }] },
+      { role: "user", content: [{ type: "tool_result", tool_use_id: `t${i}`, content: "ok" }] },
+    ]));
+  }
   await post(port, turn([{ role: "assistant", content: "ok" }, { role: "user", content: "now something small" }]));
   const decisions = readLedger({ since }).filter((e) => e.cli === "claude");
   return decisions.at(-1);

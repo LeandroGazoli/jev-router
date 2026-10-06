@@ -193,8 +193,8 @@ One Jev call per fresh user turn selects a shared abstract tier:
 - explicit requests such as `use opus`, `use luna`, or `use strong` win;
 - failure, timeout, or an unrecognised Jev answer keeps the current model;
 - low confidence never downgrades and caps upgrades at the balanced tier;
-- large conversations refuse downgrades that would waste more prompt-cache work than they save, but only while the cache is still warm (see `JEV_CACHE_TTL_MS`); the size comes from what the API reported for the previous request, not from an estimate of the message text;
-- a conversation too big for a smaller model's window (Haiku: 200K) never moves down to it;
+- a downgrade rebuilds the prompt cache on the cheaper model, so while the cache is warm (see `JEV_CACHE_TTL_MS`) and the conversation is past `JEV_DOWNGRADE_CUTOFF_TOKENS`, it only happens if the conversation will run long enough to earn that back: about 12.5 more requests for Sonnet to Haiku or Opus to Sonnet, about 4 for Opus to Haiku, whatever the size. "Long enough" is this conversation's observed requests per turn (4 until it has a history) times `JEV_TURNS_AHEAD` (3). Context size comes from what the API reported for the previous request, and the context-size metric is expressed against a 1M window (`JEV_CONTEXT_WINDOW_TOKENS`), since sessions start at 70-100k tokens;
+- a conversation too big for a smaller model's window (Haiku: 200K, kept to 160K) never moves down to it;
 - unavailable tiers step upward rather than silently choosing a weaker model;
 - the long tier is disabled unless `JEV_ALLOW_FABLE=1`.
 
@@ -215,6 +215,8 @@ sub-agents are pinned separately. Routing is fail-open: Jev failure never blocks
 | `JEV_CODEX_STRONG_MODEL` | Codex | Strong model; defaults to `gpt-5.6-sol`. |
 | `JEV_CODEX_LONG_MODEL` | Codex | Long model; defaults to `gpt-6-astra`. |
 | `JEV_DOWNGRADE_CUTOFF_TOKENS` | Both | Conversation size (in tokens) above which an automatic downgrade is refused while the cache is warm; defaults to `20000`. |
+| `JEV_TURNS_AHEAD` / `JEV_REQUESTS_PER_TURN` | Claude | Inputs to the downgrade payback estimate: further turns assumed (default `3`) and requests per turn assumed before any are observed (default `4`). |
+| `JEV_CONTEXT_WINDOW_TOKENS` | Both | Window the `contextSize` metric is measured against; defaults to `1000000`. |
 | `JEV_CACHE_TTL_MS` | Both | How long the provider keeps a prompt cache after its last use, in ms; defaults to `300000` (5 min). Use `3600000` for the 1-hour cache. After that idle time a downgrade is no longer held back by size. |
 
 Existing environment variables have highest precedence, followed by `.env` in the launch

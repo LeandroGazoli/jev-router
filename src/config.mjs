@@ -72,6 +72,13 @@ export const THRESHOLDS = {
    */
   cacheTtlMs: Number(process.env.JEV_CACHE_TTL_MS ?? 300000),
   /**
+   * Inputs to the downgrade payback estimate: how many requests a turn makes when nothing has been
+   * observed yet (a measured 3-4 per turn in real sessions), and how many further turns a
+   * conversation is assumed to run at the cheaper tier.
+   */
+  defaultRequestsPerTurn: Number(process.env.JEV_REQUESTS_PER_TURN ?? 4),
+  expectedTurnsAhead: Number(process.env.JEV_TURNS_AHEAD ?? 3),
+  /**
    * Largest conversation a tier can be handed, with room left for its reply. Haiku's window is
    * 200K, so a long conversation cannot move down to it, however cold the cache is.
    */
@@ -88,7 +95,34 @@ export const THRESHOLDS = {
 /** Tier for Claude Code's own tool-less calls (progress summaries, titles); they are not engineering work. */
 export const AUX_TIER = process.env.JEV_AUX_TIER ?? "haiku";
 
-export const CONTEXT_WINDOW_TOKENS = 200000;
+/**
+ * The window the context-size metric is expressed against: 1M, what Opus and Sonnet work with.
+ * Claude Code sessions start at roughly 70-100k tokens (system prompt, MCP tools, plugins and
+ * skills), so against a 200K window the metric sat at 40% before anyone typed anything.
+ */
+export const CONTEXT_WINDOW_TOKENS = Number(process.env.JEV_CONTEXT_WINDOW_TOKENS ?? 1_000_000);
+
+/**
+ * Input price per million tokens by tier, used only as ratios (Anthropic list prices, cached
+ * 2026-09-25: Haiku 4.5 $1, Sonnet 5.5 $2, Opus 5.5 $4, Fable $10), and the cache multipliers on
+ * the base input price (write about 1.25x, read about 0.1x).
+ */
+export const TIER_INPUT_PRICE = { haiku: 1, sonnet: 2, opus: 4, fable: 10 };
+const CACHE_WRITE = 1.25;
+const CACHE_READ = 0.1;
+
+/**
+ * How many more requests a conversation must make on the cheaper tier before moving down to it
+ * has paid for rebuilding its cache there. The size of the conversation cancels out of this:
+ * both the one-off rebuild and the per-request saving scale with it. Infinity when the move
+ * saves nothing.
+ */
+export function paybackRequests(from, to) {
+  const a = TIER_INPUT_PRICE[from];
+  const b = TIER_INPUT_PRICE[to];
+  if (!(a > b)) return Infinity;
+  return (CACHE_WRITE * b) / (CACHE_READ * (a - b));
+}
 
 const COMPLEXITY_SCALE = [
   "None",
