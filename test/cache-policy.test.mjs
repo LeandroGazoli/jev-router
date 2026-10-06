@@ -31,3 +31,22 @@ test("the window limit does not hold back upgrades", () => {
   const out = decide({ ...base, current: "haiku", jev: { choice: "sonnet", confidence: 0.95 }, contextTokens: 170000, cacheWarm: false });
   assert.equal(out.tier, "sonnet");
 });
+
+test("break-even is the same whatever the size of the conversation, and depends on the price gap", async () => {
+  const { paybackRequests, CONTEXT_WINDOW_TOKENS } = await import("../src/config.mjs");
+  assert.equal(paybackRequests("sonnet", "haiku"), 12.5);
+  assert.equal(paybackRequests("opus", "sonnet"), 12.5);
+  assert.ok(Math.abs(paybackRequests("opus", "haiku") - 4.1667) < 0.001, "a bigger price gap pays back sooner");
+  assert.equal(paybackRequests("haiku", "sonnet"), Infinity, "moving up saves nothing");
+  assert.equal(CONTEXT_WINDOW_TOKENS, 1_000_000);
+});
+
+test("with a long run ahead a big, warm conversation may still move down; with a short one it may not", () => {
+  const longRun = decide({ ...base, expectedRequests: 20 });
+  assert.equal(longRun.tier, "haiku");
+  const shortRun = decide({ ...base, expectedRequests: 8 });
+  assert.equal(shortRun.tier, "sonnet");
+  assert.match(shortRun.reason, /cache-rebuild/);
+  assert.equal(decide({ ...base, current: "opus", expectedRequests: 6 }).tier, "haiku", "opus to haiku pays back in about 4");
+  assert.equal(decide({ ...base, contextTokens: 5000, expectedRequests: 1 }).tier, "haiku", "a tiny cache is cheap to lose");
+});

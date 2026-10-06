@@ -283,6 +283,7 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
             const requestAt = Date.now();
             const cacheWarm = state.lastAt != null && requestAt - state.lastAt < THRESHOLDS.cacheTtlMs;
             state.lastAt = requestAt;
+            state.requests = (state.requests ?? 0) + 1;
             // What the prompt cache was built on, which is what a downgrade would discard.
             const current = state.tier ?? "opus";
             // No tier has been fixed for this conversation yet, so there is no cache built on
@@ -318,7 +319,11 @@ export async function startProxy({ upstreamURL = ANTHROPIC_BASE_URL, route = ask
                 available,
                 contextTokens: noTierYet ? 0 : contextTokens,
                 cacheWarm,
+                // This turn's requests plus the turns the person is likely to send next, at the
+                // pace this conversation has shown so far.
+                expectedRequests: THRESHOLDS.expectedTurnsAhead * ((state.requests - 1) / Math.max(state.turns ?? 0, 1) || THRESHOLDS.defaultRequestsPerTurn),
               });
+              state.turns = (state.turns ?? 0) + 1;
               const model =
                 shouldUseExactModel(reason, chosen?.tier, tier)
                   ? chosen.id
